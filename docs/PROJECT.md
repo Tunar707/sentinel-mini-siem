@@ -1,0 +1,37 @@
+
+# Mini SIEM Tool
+
+## Stack
+- React 19 + Vite
+- Express
+- TypeScript
+- Prisma
+- SQLite
+
+## Current phase
+Phase 2 — Authentication Foundation
+
+## Completed
+- Monorepo structure
+- React client
+- Express API
+- Prisma schema
+- JWT authentication
+- SQLite database
+
+## Next milestone
+Implement production Prisma client and RBAC before log ingestion.
+
+## Current phase
+Phase 3 — Log Ingestion
+
+## Completed
+- Phase 1 — Foundation
+- Phase 2 — Authentication
+
+## Next milestone
+- Log model (Prisma)
+- POST /api/logs
+- GET /api/logs
+- Severity enum
+- React event table
