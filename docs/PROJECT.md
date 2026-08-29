@@ -46,3 +46,19 @@ Phase 4 — SOC Dashboard
 - SQLite
 - Log ingestion API
 - Analyst dashboard
+
+## Current phase
+Phase 4 — Interactive SOC Dashboard
+
+## Completed
+- Monorepo structure
+- React + Vite client
+- Express API
+- Prisma + SQLite
+- JWT authentication
+- Log ingestion API
+- Analyst dashboard
+- Interactive log generator
+
+## Next milestone
+Phase 5 — Search, filters, analytics and SOC UI refinement.
