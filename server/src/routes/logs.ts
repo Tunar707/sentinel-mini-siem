@@ -13,6 +13,49 @@ const logSchema = z.object({
   message: z.string().min(1, 'Message is required')
 });
 
+const detectBruteforce = async (source: string) => {
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+
+  const recentFailedLogins = await prisma.log.count({
+    where: {
+      source,
+      eventType: 'Failed Login',
+      severity: 'HIGH',
+      timestamp: {
+        gte: twoMinutesAgo
+      }
+    }
+  });
+
+  if (recentFailedLogins < 5) {
+    return;
+  }
+
+  const recentAlertCount = await prisma.log.count({
+    where: {
+      source,
+      eventType: 'BRUTE_FORCE_DETECTED',
+      severity: 'CRITICAL',
+      timestamp: {
+        gte: twoMinutesAgo
+      }
+    }
+  });
+
+  if (recentAlertCount > 0) {
+    return;
+  }
+
+  await prisma.log.create({
+    data: {
+      source,
+      eventType: 'BRUTE_FORCE_DETECTED',
+      severity: 'CRITICAL',
+      message: `Brute force attack detected against ${source}`
+    }
+  });
+};
+
 router.post('/', requireAuth, async (req, res) => {
   try {
     const payload = logSchema.parse(req.body);
@@ -25,6 +68,8 @@ router.post('/', requireAuth, async (req, res) => {
         message: payload.message
       }
     });
+
+    await detectBruteforce(payload.source);
 
     res.status(201).json(log);
   } catch (error: any) {
