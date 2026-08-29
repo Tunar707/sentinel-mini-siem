@@ -1,1 +1,19 @@
 node_modules
+
+# Environment
+.env
+
+# Database
+dev.db
+
+# Build output
+dist/
+client/dist/
+server/dist/
+shared/dist/
+
+# macOS
+.DS_Store
+
+# Dependencies
+node_modules/
