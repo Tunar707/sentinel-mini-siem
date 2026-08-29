@@ -70,6 +70,7 @@ function App() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('ALL');
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
 
   const fetchHealth = async (token: string) => {
     try {
@@ -124,6 +125,8 @@ function App() {
       setError(err.message);
     }
   };
+
+  const incidentLogs = logs.filter((log) => log.severity === 'CRITICAL');
 
   const filteredLogs = logs.filter((log) => {
     const matchesSearch = !search || [log.source, log.eventType, log.message].some((value) =>
@@ -245,6 +248,66 @@ function App() {
 
         <section style={{ marginTop: '2rem', background: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <h2 style={{ margin: 0 }}>Incidents</h2>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: '2rem',
+                height: '2rem',
+                padding: '0 0.5rem',
+                borderRadius: '9999px',
+                background: '#dc2626',
+                color: '#fef2f2',
+                fontWeight: 700
+              }}>{incidentLogs.length}</span>
+            </div>
+          </div>
+
+          {incidentLogs.length === 0 ? (
+            <p style={{ color: '#cbd5e1', margin: 0 }}>No critical incidents.</p>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+              {incidentLogs.map((incident) => (
+                <button
+                  key={incident.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedIncidentId(incident.id);
+                    const row = document.getElementById(`log-row-${incident.id}`);
+                    if (row) {
+                      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      row.style.background = 'rgba(239, 68, 68, 0.18)';
+                      row.style.boxShadow = 'inset 0 0 0 1px rgba(239, 68, 68, 0.7)';
+                      setTimeout(() => {
+                        row.style.background = 'rgba(15, 23, 42, 0.7)';
+                        row.style.boxShadow = 'none';
+                      }, 1800);
+                    }
+                  }}
+                  style={{
+                    textAlign: 'left',
+                    background: selectedIncidentId === incident.id ? 'rgba(239, 68, 68, 0.18)' : 'rgba(15, 23, 42, 0.8)',
+                    border: '1px solid rgba(239, 68, 68, 0.5)',
+                    borderRadius: '12px',
+                    padding: '0.9rem',
+                    color: '#f8fafc',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: '0.4rem' }}>{incident.eventType}</div>
+                  <div style={{ color: '#cbd5e1', fontSize: '0.9rem', marginBottom: '0.2rem' }}>{incident.source}</div>
+                  <div style={{ color: '#fca5a5', fontSize: '0.8rem', marginBottom: '0.4rem' }}>{new Date(incident.timestamp).toLocaleString()}</div>
+                  <div style={{ color: '#e2e8f0', fontSize: '0.85rem', lineHeight: 1.4 }}>{incident.message}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section style={{ marginTop: '2rem', background: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
             <h2 style={{ margin: 0 }}>Analyst Dashboard</h2>
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <input
@@ -299,7 +362,7 @@ function App() {
                 </thead>
                 <tbody>
                   {filteredLogs.map((log) => (
-                    <tr key={log.id} style={{ background: 'rgba(15, 23, 42, 0.7)' }}>
+                    <tr id={`log-row-${log.id}`} key={log.id} style={{ background: selectedIncidentId === log.id ? 'rgba(239, 68, 68, 0.18)' : 'rgba(15, 23, 42, 0.7)' }}>
                       <td style={{ padding: '0.85rem 1rem', borderBottom: '1px solid rgba(148, 163, 184, 0.15)', verticalAlign: 'top', color: '#cbd5e1' }}>
                         {new Date(log.timestamp).toLocaleString()}
                       </td>
