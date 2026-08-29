@@ -138,6 +138,34 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!auth) return;
+
+    const source = new EventSource(`/api/logs/stream?token=${encodeURIComponent(auth.token)}`);
+
+    const handleLogEvent = (event: MessageEvent<string>) => {
+      try {
+        const incoming = JSON.parse(event.data) as LogEntry;
+        setLogs((current) => {
+          const exists = current.some((log) => log.id === incoming.id);
+          if (exists) return current;
+          return [incoming, ...current];
+        });
+      } catch {
+        // ignore heartbeat / metadata payloads
+      }
+    };
+
+    source.addEventListener('log', handleLogEvent);
+    source.onmessage = handleLogEvent;
+
+    source.onerror = () => {
+      setError('Live log stream disconnected. Refresh to reconnect.');
+    };
+
+    return () => source.close();
+  }, [auth?.token]);
+
   if (!auth) {
     return <Login onLogin={(data) => {
       setAuth(data);
