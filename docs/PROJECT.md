@@ -35,3 +35,14 @@ Phase 3 — Log Ingestion
 - GET /api/logs
 - Severity enum
 - React event table
+
+## Current phase
+Phase 4 — SOC Dashboard
+
+## Completed
+- Authentication
+- JWT
+- Prisma
+- SQLite
+- Log ingestion API
+- Analyst dashboard

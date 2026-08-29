@@ -13,11 +13,51 @@ type LogEntry = {
   message: string;
 };
 
+type LogTemplate = {
+  source: string;
+  eventType: string;
+  severity: Severity;
+  message: string;
+};
+
 const severityColors: Record<Severity, { background: string; color: string }> = {
   LOW: { background: '#e5e7eb', color: '#111827' },
   MEDIUM: { background: '#dbeafe', color: '#1d4ed8' },
   HIGH: { background: '#fed7aa', color: '#c2410c' },
   CRITICAL: { background: '#fecaca', color: '#b91c1c' }
+};
+
+const logTemplates: Record<string, LogTemplate> = {
+  'Failed Login': {
+    source: 'Auth Gateway',
+    eventType: 'Failed Login',
+    severity: 'MEDIUM',
+    message: 'User admin attempted login from 192.168.1.21 with invalid password after 3 retries.'
+  },
+  'Malware Detection': {
+    source: 'Endpoint Agent',
+    eventType: 'Malware Detection',
+    severity: 'HIGH',
+    message: 'Suspicious PowerShell process matched ransomware family indicators on workstation WS-17.'
+  },
+  'Port Scan': {
+    source: 'Firewall',
+    eventType: 'Port Scan',
+    severity: 'HIGH',
+    message: 'External host 45.76.102.18 scanned 150 TCP ports across DMZ segment in 12 seconds.'
+  },
+  'Brute Force': {
+    source: 'VPN',
+    eventType: 'Brute Force',
+    severity: 'CRITICAL',
+    message: 'Repeated SSH login attempts against root account exceeded threshold from 203.0.113.9.'
+  },
+  'Critical Alert': {
+    source: 'SIEM Correlation',
+    eventType: 'Critical Alert',
+    severity: 'CRITICAL',
+    message: 'Alert correlation triggered: privilege escalation + suspicious outbound beaconing on finance node.'
+  }
 };
 
 function App() {
@@ -53,6 +93,31 @@ function App() {
       setError(err.message);
     } finally {
       setLogsLoading(false);
+    }
+  };
+
+  const generateLog = async (templateName: keyof typeof logTemplates) => {
+    if (!auth) return;
+
+    const template = logTemplates[templateName];
+    try {
+      const res = await fetch('/api/logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${auth.token}`
+        },
+        body: JSON.stringify(template)
+      });
+
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || 'Failed to generate log');
+      }
+
+      await fetchLogs(auth.token);
+    } catch (err: any) {
+      setError(err.message);
     }
   };
 
@@ -100,6 +165,29 @@ function App() {
         {backendHealth?.user && (
           <pre>{JSON.stringify(backendHealth.user, null, 2)}</pre>
         )}
+      </section>
+
+      <section style={{ marginTop: '2rem' }}>
+        <h2>Log Generator</h2>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
+          {Object.keys(logTemplates).map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => generateLog(name as keyof typeof logTemplates)}
+              style={{
+                padding: '0.7rem 1rem',
+                borderRadius: '8px',
+                border: '1px solid #d1d5db',
+                background: '#f9fafb',
+                cursor: 'pointer',
+                fontWeight: 600
+              }}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section style={{ marginTop: '2rem' }}>
