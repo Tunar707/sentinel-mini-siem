@@ -16,11 +16,32 @@ model User {
 }
 
 model Log {
-  id        String   @id @default(cuid())
-  timestamp DateTime @default(now())
+  id        String    @id @default(cuid())
+  timestamp DateTime  @default(now())
   source    String
   eventType String
   severity  String
   message   String
+  createdAt DateTime  @default(now())
+  incident  Incident?
+}
+
+model Incident {
+  id              String        @id @default(cuid())
+  logId           String        @unique
+  log             Log           @relation(fields: [logId], references: [id])
+  status          String        @default("New")
+  assignedAnalyst String        @default("Tunar")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  notes           IncidentNote[]
+}
+
+model IncidentNote {
+  id        String   @id @default(cuid())
+  incidentId String
+  incident  Incident @relation(fields: [incidentId], references: [id])
+  analyst   String
+  content   String
   createdAt DateTime @default(now())
 }

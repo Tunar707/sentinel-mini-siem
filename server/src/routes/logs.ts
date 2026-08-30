@@ -71,6 +71,17 @@ const detectBruteforce = async (source: string) => {
     }
   });
 
+  const existingIncident = await prisma.incident.findUnique({ where: { logId: alert.id } });
+  if (!existingIncident) {
+    await prisma.incident.create({
+      data: {
+        logId: alert.id,
+        status: 'New',
+        assignedAnalyst: 'Tunar'
+      }
+    });
+  }
+
   broadcastLog(alert);
 };
 

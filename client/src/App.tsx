@@ -50,9 +50,18 @@ type TimelineEntry = {
   analyst?: string;
 };
 
-type IncidentWorkflow = {
+type IncidentDetail = {
+  id: string;
+  logId: string;
   status: WorkflowStatus;
   assignedAnalyst: AnalystName;
+  createdAt: string;
+  updatedAt: string;
+  source?: string;
+  eventType?: string;
+  severity?: string;
+  timestamp?: string;
+  message?: string;
   notes: IncidentNote[];
   timeline: TimelineEntry[];
 };
@@ -128,19 +137,6 @@ const buildHourlySeries = (logs: LogEntry[]) => {
   return { counts, points, max, path, areaPath };
 };
 
-const createDefaultWorkflow = (incidentId: string, incidentTimestamp: string): IncidentWorkflow => ({
-  status: 'New',
-  assignedAnalyst: 'Tunar',
-  notes: [],
-  timeline: [{
-    id: `${incidentId}-created`,
-    type: 'created',
-    timestamp: incidentTimestamp,
-    message: 'Incident created',
-    analyst: 'System'
-  }]
-});
-
 const escapeMarkdownHtml = (value: string) => value
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -175,7 +171,7 @@ function App() {
   const [chartHoverIndex, setChartHoverIndex] = useState<number | null>(null);
   const [templateCategory, setTemplateCategory] = useState<'All' | string>('All');
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
-  const [incidentWorkflows, setIncidentWorkflows] = useState<Record<string, IncidentWorkflow>>({});
+  const [selectedIncidentDetail, setSelectedIncidentDetail] = useState<IncidentDetail | null>(null);
   const [incidentNoteDraft, setIncidentNoteDraft] = useState('');
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -217,21 +213,19 @@ function App() {
     return matchesSearch && matchesSeverity;
   });
 
-  const ensureIncidentWorkflow = (incidentId: string, timestamp: string) => {
-    setIncidentWorkflows((current) => {
-      if (current[incidentId]) return current;
-      return {
-        ...current,
-        [incidentId]: createDefaultWorkflow(incidentId, timestamp)
-      };
+  const fetchIncidentDetail = async (incidentId: string): Promise<IncidentDetail | null> => {
+    if (!auth) return null;
+    const res = await fetch(`/api/incidents/${incidentId}`, {
+      headers: { Authorization: `Bearer ${auth.token}` }
     });
-  };
 
-  const updateIncidentWorkflow = (incidentId: string, updater: (workflow: IncidentWorkflow) => IncidentWorkflow) => {
-    setIncidentWorkflows((current) => ({
-      ...current,
-      [incidentId]: updater(current[incidentId] ?? createDefaultWorkflow(incidentId, new Date().toISOString()))
-    }));
+    if (!res.ok) {
+      throw new Error('Unable to load incident details');
+    }
+
+    const data = await res.json() as IncidentDetail;
+    setSelectedIncidentDetail(data);
+    return data;
   };
 
   const incidentLogs = logs.filter((log) => log.severity === 'CRITICAL');
@@ -325,11 +319,12 @@ function App() {
     }} />;
   }
 
-  const handleIncidentSelect = (incidentId: string) => {
+  const handleIncidentSelect = async (incidentId: string) => {
     setSelectedIncidentId(incidentId);
-    const incident = [...logs].find((log) => log.id === incidentId) ?? filteredCriticalLogs.find((log) => log.id === incidentId);
-    if (incident) {
-      ensureIncidentWorkflow(incidentId, incident.timestamp);
+    try {
+      await fetchIncidentDetail(incidentId);
+    } catch {
+      setSelectedIncidentDetail(null);
     }
     const row = document.getElementById(`log-row-${incidentId}`);
     if (row) {
@@ -343,78 +338,89 @@ function App() {
     }
   };
 
-  const selectedIncident = logs.find((log) => log.id === selectedIncidentId) ?? null;
-  const selectedWorkflow = selectedIncident ? incidentWorkflows[selectedIncident.id] ?? createDefaultWorkflow(selectedIncident.id, selectedIncident.timestamp) : null;
+  const selectedWorkflow = selectedIncidentDetail
+    ? {
+        status: selectedIncidentDetail.status,
+        assignedAnalyst: selectedIncidentDetail.assignedAnalyst,
+        notes: selectedIncidentDetail.notes ?? [],
+        timeline: selectedIncidentDetail.timeline ?? []
+      }
+    : null;
 
-  const addIncidentNote = () => {
-    if (!selectedIncident || !selectedWorkflow) return;
+  const addIncidentNote = async () => {
+    if (!selectedIncidentDetail || !selectedWorkflow) return;
     const note = incidentNoteDraft.trim();
     if (!note) return;
 
-    const analystName = selectedWorkflow.assignedAnalyst;
-    const timestamp = new Date().toISOString();
+    try {
+      const res = await fetch(`/api/incidents/${selectedIncidentDetail.id}/notes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${auth!.token}`
+        },
+        body: JSON.stringify({
+          analyst: selectedWorkflow.assignedAnalyst,
+          content: note
+        })
+      });
 
-    const nextNote: IncidentNote = {
-      id: `${selectedIncident.id}-note-${Date.now()}`,
-      timestamp,
-      analyst: analystName,
-      content: note
-    };
+      if (!res.ok) {
+        throw new Error('Unable to save note');
+      }
 
-    updateIncidentWorkflow(selectedIncident.id, (workflow) => {
-      const nextTimelineEntry: TimelineEntry = {
-        id: `${selectedIncident.id}-note-${Date.now()}`,
-        type: 'note',
-        timestamp,
-        message: `Note added by ${analystName}`,
-        analyst: analystName
-      };
-
-      return {
-        ...workflow,
-        notes: [...workflow.notes, nextNote].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
-        timeline: [...workflow.timeline, nextTimelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      };
-    });
-    setIncidentNoteDraft('');
+      const nextDetail = await res.json();
+      setSelectedIncidentDetail(nextDetail as IncidentDetail);
+      setIncidentNoteDraft('');
+    } catch {
+      setError('Unable to save note.');
+    }
   };
 
-  const updateWorkflowStatus = (status: WorkflowStatus) => {
-    if (!selectedIncident) return;
-    updateIncidentWorkflow(selectedIncident.id, (workflow) => {
-      const nextTimelineEntry: TimelineEntry = {
-        id: `${selectedIncident.id}-status-${Date.now()}`,
-        type: 'status',
-        timestamp: new Date().toISOString(),
-        message: `Status changed to ${status}`,
-        analyst: workflow.assignedAnalyst
-      };
+  const updateWorkflowStatus = async (status: WorkflowStatus) => {
+    if (!selectedIncidentDetail || !auth) return;
 
-      return {
-        ...workflow,
-        status,
-        timeline: [...workflow.timeline, nextTimelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      };
-    });
+    try {
+      const res = await fetch(`/api/incidents/${selectedIncidentDetail.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${auth.token}`
+        },
+        body: JSON.stringify({ status })
+      });
+
+      if (!res.ok) {
+        throw new Error('Unable to update status');
+      }
+
+      setSelectedIncidentDetail(await res.json() as IncidentDetail);
+    } catch {
+      setError('Unable to update incident status.');
+    }
   };
 
-  const updateAssignedAnalyst = (analyst: AnalystName) => {
-    if (!selectedIncident) return;
-    updateIncidentWorkflow(selectedIncident.id, (workflow) => {
-      const nextTimelineEntry: TimelineEntry = {
-        id: `${selectedIncident.id}-assignment-${Date.now()}`,
-        type: 'assignment',
-        timestamp: new Date().toISOString(),
-        message: `Assigned to ${analyst}`,
-        analyst
-      };
+  const updateAssignedAnalyst = async (analyst: AnalystName) => {
+    if (!selectedIncidentDetail || !auth) return;
 
-      return {
-        ...workflow,
-        assignedAnalyst: analyst,
-        timeline: [...workflow.timeline, nextTimelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      };
-    });
+    try {
+      const res = await fetch(`/api/incidents/${selectedIncidentDetail.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${auth.token}`
+        },
+        body: JSON.stringify({ assignedAnalyst: analyst })
+      });
+
+      if (!res.ok) {
+        throw new Error('Unable to update analyst');
+      }
+
+      setSelectedIncidentDetail(await res.json() as IncidentDetail);
+    } catch {
+      setError('Unable to update analyst assignment.');
+    }
   };
 
   const handleComposerChange = (field: keyof EventComposerState, value: string) => {
@@ -1211,10 +1217,14 @@ function App() {
     boxSizing: 'border-box'
   };
 
-  const drawerIncident = selectedIncident && selectedWorkflow ? {
-    incident: selectedIncident,
+  const drawerIncident = selectedIncidentDetail && selectedWorkflow ? {
+    incident: selectedIncidentDetail,
     workflow: selectedWorkflow
   } : null;
+
+  const drawerMitre = drawerIncident && drawerIncident.incident.eventType
+    ? getMitreMapping(drawerIncident.incident.eventType)
+    : { id: 'N/A', tactic: 'Unknown', color: '#64748b' };
 
   return (
     <div style={{
@@ -1430,37 +1440,37 @@ function App() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
                 <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
                   <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Event Type</div>
-                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.eventType}</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.eventType ?? 'Unknown'}</div>
                 </div>
                 <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
                   <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Source</div>
-                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.source}</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.source ?? 'Unknown'}</div>
                 </div>
                 <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
                   <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Severity</div>
-                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.severity}</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.severity ?? 'Unknown'}</div>
                 </div>
                 <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
                   <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Timestamp</div>
-                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{new Date(drawerIncident.incident.timestamp).toLocaleString()}</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{new Date(drawerIncident.incident.timestamp ?? drawerIncident.incident.createdAt).toLocaleString()}</div>
                 </div>
               </div>
 
               <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
                 <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>MITRE Mapping</div>
                 <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '0.2rem', padding: '0.45rem 0.7rem', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.8)', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
-                  <span style={{ display: 'inline-block', padding: '0.2rem 0.5rem', borderRadius: '9999px', background: getMitreMapping(drawerIncident.incident.eventType).color, color: '#f8fafc', fontWeight: 700, fontSize: '0.72rem', letterSpacing: '0.04em', width: 'fit-content' }}>
-                    {getMitreMapping(drawerIncident.incident.eventType).id}
+                  <span style={{ display: 'inline-block', padding: '0.2rem 0.5rem', borderRadius: '9999px', background: drawerMitre.color, color: '#f8fafc', fontWeight: 700, fontSize: '0.72rem', letterSpacing: '0.04em', width: 'fit-content' }}>
+                    {drawerMitre.id}
                   </span>
                   <span style={{ color: '#cbd5e1', fontSize: '0.7rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                    {getMitreMapping(drawerIncident.incident.eventType).tactic}
+                    {drawerMitre.tactic}
                   </span>
                 </div>
               </div>
 
               <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
                 <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Description</div>
-                <div style={{ color: '#e2e8f0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{drawerIncident.incident.message}</div>
+                <div style={{ color: '#e2e8f0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{drawerIncident.incident.message ?? 'No description available.'}</div>
               </div>
 
               <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
@@ -1547,7 +1557,7 @@ function App() {
                 <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Timeline</div>
                 <div style={{ display: 'grid', gap: '0.8rem', position: 'relative', paddingLeft: '0.85rem' }}>
                   <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '2px', background: 'rgba(96, 165, 250, 0.34)' }} />
-                  {drawerIncident.workflow.timeline.map((entry) => (
+                  {drawerIncident.workflow.timeline.map((entry: TimelineEntry) => (
                     <div key={entry.id} style={{ display: 'flex', gap: '0.75rem', position: 'relative' }}>
                       <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#60a5fa', border: '2px solid rgba(15,23,42,0.9)', marginTop: '0.3rem', position: 'relative', zIndex: 1 }} />
                       <div style={{ flex: 1, background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '10px', padding: '0.55rem 0.65rem' }}>
@@ -1565,8 +1575,8 @@ function App() {
                   <div style={{ display: 'grid', gap: '0.7rem' }}>
                     {drawerIncident.workflow.notes
                       .slice()
-                      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-                      .map((note) => (
+                      .sort((a: IncidentNote, b: IncidentNote) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                      .map((note: IncidentNote) => (
                         <div key={note.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '10px', padding: '0.65rem 0.7rem' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.35rem', color: '#cbd5e1', fontSize: '0.68rem' }}>
                             <span>{note.analyst}</span>
