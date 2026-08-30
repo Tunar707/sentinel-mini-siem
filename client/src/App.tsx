@@ -16,7 +16,7 @@ import { evaluateDetectionRules } from './utils/detectionEngine';
 import { evaluateIOCs } from './utils/iocEngine';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -88,6 +88,29 @@ type CaseRecord = {
   notes: CaseNote[];
 };
 
+type AssetStatus = 'Active' | 'Monitoring' | 'Isolated' | 'Offline';
+type AssetType = 'Workstation' | 'Server' | 'Laptop' | 'Firewall' | 'Kubernetes' | 'VM' | 'Database' | 'Endpoint';
+type AssetCriticality = 'Low' | 'Medium' | 'High' | 'Critical';
+type AssetNote = {
+  id: string;
+  timestamp: string;
+  analyst: string;
+  content: string;
+};
+type AssetRecord = {
+  id: string;
+  hostname: string;
+  ip: string;
+  type: AssetType;
+  owner: string;
+  department: string;
+  status: AssetStatus;
+  criticality: AssetCriticality;
+  riskScore: number;
+  lastSeen: string;
+  notes: AssetNote[];
+};
+
 type IncidentDetail = {
   id: string;
   logId: string;
@@ -132,6 +155,26 @@ const caseStatuses: CaseStatus[] = ['Reported', 'New', 'Triage', 'Investigating'
 const casePriorities: CasePriority[] = ['P1', 'P2', 'P3', 'P4'];
 const caseSlaOptions = ['4 hours', '8 hours', '24 hours', '72 hours'];
 const demoAnalysts: AnalystName[] = ['Tunar', 'Sarah', 'Michael', 'Emma'];
+const assetStatuses: AssetStatus[] = ['Active', 'Monitoring', 'Isolated', 'Offline'];
+const assetTypes: AssetType[] = ['Workstation', 'Server', 'Laptop', 'Firewall', 'Kubernetes', 'VM', 'Database', 'Endpoint'];
+const assetCriticalities: AssetCriticality[] = ['Low', 'Medium', 'High', 'Critical'];
+const defaultAssets: AssetRecord[] = [
+  { id: 'asset-01', hostname: 'FIN-WKS-06', ip: '172.16.10.8', type: 'Workstation', owner: 'M. Brown', department: 'Finance', status: 'Monitoring', criticality: 'High', riskScore: 82, lastSeen: '2026-08-31T14:10:00.000Z', notes: [] },
+  { id: 'asset-02', hostname: 'FILE-SVR-12', ip: '172.20.8.11', type: 'Server', owner: 'S. Patel', department: 'Operations', status: 'Isolated', criticality: 'Critical', riskScore: 94, lastSeen: '2026-08-31T13:58:00.000Z', notes: [] },
+  { id: 'asset-03', hostname: 'DMZ-FW-01', ip: '10.12.8.1', type: 'Firewall', owner: 'N. Reed', department: 'Network', status: 'Active', criticality: 'Critical', riskScore: 88, lastSeen: '2026-08-31T14:14:00.000Z', notes: [] },
+  { id: 'asset-04', hostname: 'VPN-GW-01', ip: '10.10.44.18', type: 'Firewall', owner: 'R. Chen', department: 'Identity', status: 'Monitoring', criticality: 'High', riskScore: 79, lastSeen: '2026-08-31T13:49:00.000Z', notes: [] },
+  { id: 'asset-05', hostname: 'AD-01', ip: '10.30.50.5', type: 'Server', owner: 'A. Singh', department: 'IT', status: 'Active', criticality: 'Critical', riskScore: 91, lastSeen: '2026-08-31T13:40:00.000Z', notes: [] },
+  { id: 'asset-06', hostname: 'ENG-LAP-17', ip: '10.64.7.8', type: 'Laptop', owner: 'N. Garcia', department: 'Engineering', status: 'Monitoring', criticality: 'Medium', riskScore: 58, lastSeen: '2026-08-31T12:50:00.000Z', notes: [] },
+  { id: 'asset-07', hostname: 'SQL-DB-01', ip: '10.90.14.22', type: 'Database', owner: 'L. Park', department: 'Data', status: 'Active', criticality: 'Critical', riskScore: 90, lastSeen: '2026-08-31T14:02:00.000Z', notes: [] },
+  { id: 'asset-08', hostname: 'EKS-CLUSTER-01', ip: '10.9.13.31', type: 'Kubernetes', owner: 'K. Gomez', department: 'Cloud', status: 'Monitoring', criticality: 'Critical', riskScore: 92, lastSeen: '2026-08-31T13:47:00.000Z', notes: [] },
+  { id: 'asset-09', hostname: 'FIN-LAP-22', ip: '10.28.45.15', type: 'Laptop', owner: 'S. Green', department: 'Finance', status: 'Monitoring', criticality: 'High', riskScore: 71, lastSeen: '2026-08-31T13:15:00.000Z', notes: [] },
+  { id: 'asset-10', hostname: 'HR-PC-04', ip: '10.23.9.44', type: 'Workstation', owner: 'P. Nunez', department: 'Human Resources', status: 'Active', criticality: 'Medium', riskScore: 46, lastSeen: '2026-08-31T12:42:00.000Z', notes: [] },
+  { id: 'asset-11', hostname: 'MAIL-GW-03', ip: '10.3.19.12', type: 'Endpoint', owner: 'D. Roberts', department: 'IT', status: 'Active', criticality: 'High', riskScore: 72, lastSeen: '2026-08-31T13:32:00.000Z', notes: [] },
+  { id: 'asset-12', hostname: 'SALES-LAP-12', ip: '10.14.7.19', type: 'Laptop', owner: 'T. Kelly', department: 'Sales', status: 'Isolated', criticality: 'High', riskScore: 77, lastSeen: '2026-08-31T13:08:00.000Z', notes: [] },
+  { id: 'asset-13', hostname: 'WEB-APP-01', ip: '203.0.113.84', type: 'Server', owner: 'C. Diaz', department: 'Web', status: 'Monitoring', criticality: 'Critical', riskScore: 96, lastSeen: '2026-08-31T13:11:00.000Z', notes: [] },
+  { id: 'asset-14', hostname: 'SVR-DB-02', ip: '10.180.22.4', type: 'Database', owner: 'R. Flores', department: 'Data', status: 'Offline', criticality: 'High', riskScore: 65, lastSeen: '2026-08-31T12:20:00.000Z', notes: [] },
+  { id: 'asset-15', hostname: 'WORKSTATION-17', ip: '172.16.55.14', type: 'Workstation', owner: 'R. Hughes', department: 'Operations', status: 'Isolated', criticality: 'Critical', riskScore: 88, lastSeen: '2026-08-31T13:53:00.000Z', notes: [] }
+];
 const ipv4Regex = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.|$)){4}$/;
 const commonSourceOptions = [...sourceOptions];
 
@@ -262,6 +305,14 @@ function App() {
       return [];
     }
   });
+  const [assets, setAssets] = useState<AssetRecord[]>(() => {
+    try {
+      const savedAssets = localStorage.getItem('sentinel-assets');
+      return savedAssets ? JSON.parse(savedAssets) as AssetRecord[] : defaultAssets;
+    } catch {
+      return defaultAssets;
+    }
+  });
   const [employeeTickets, setEmployeeTickets] = useState<EmployeeTicket[]>(() => {
     try {
       const savedTickets = localStorage.getItem('sentinel-employee-tickets');
@@ -271,7 +322,14 @@ function App() {
     }
   });
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
+  const [assetNoteDraft, setAssetNoteDraft] = useState('');
+  const [assetSearch, setAssetSearch] = useState('');
+  const [assetStatusFilter, setAssetStatusFilter] = useState<'All' | AssetStatus>('All');
+  const [assetTypeFilter, setAssetTypeFilter] = useState<'All' | AssetType>('All');
+  const [assetDepartmentFilter, setAssetDepartmentFilter] = useState<'All' | string>('All');
+  const [assetCriticalityFilter, setAssetCriticalityFilter] = useState<'All' | AssetCriticality>('All');
   const [responseChecklist, setResponseChecklist] = useState<Record<string, boolean>>({});
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(null);
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
@@ -297,6 +355,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('sentinel-cases', JSON.stringify(cases));
   }, [cases]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-assets', JSON.stringify(assets));
+  }, [assets]);
 
   useEffect(() => {
     localStorage.setItem('sentinel-employee-tickets', JSON.stringify(employeeTickets));
@@ -947,6 +1009,27 @@ function App() {
     setCaseNoteDraft('');
   };
 
+  const addAssetNote = () => {
+    if (!selectedAssetId) return;
+    const content = assetNoteDraft.trim();
+    if (!content) return;
+
+    const timestamp = new Date().toISOString();
+    setAssets((current) => current.map((asset) => asset.id === selectedAssetId
+      ? {
+          ...asset,
+          notes: [...asset.notes, {
+            id: `${asset.id}-note-${Date.now()}`,
+            timestamp,
+            analyst: auth.user.email,
+            content
+          }].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        }
+      : asset));
+
+    setAssetNoteDraft('');
+  };
+
   const handleComposerChange = (field: keyof EventComposerState, value: string) => {
     setComposer((current) => ({ ...current, [field]: value }));
     setComposerError('');
@@ -1040,6 +1123,7 @@ function App() {
     { label: 'Dashboard', icon: '▣' },
     { label: 'Incidents', icon: '⚑' },
     { label: 'Cases', icon: '▤' },
+    { label: 'Assets', icon: '▣' },
     { label: 'Events', icon: '◫' },
     { label: 'Rules', icon: '◇' },
     { label: 'Threat Intel', icon: '✦' },
@@ -1151,6 +1235,220 @@ function App() {
                   <div><div style={{ color: '#94a3b8', fontSize: '0.68rem', textTransform: 'uppercase' }}>SLA</div><strong>{item.sla}</strong></div>
                 </button>
               ))}
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    if (activePage === 'Assets') {
+      const assetDepartments = ['All', ...Array.from(new Set(assets.map((asset) => asset.department)))];
+      const filteredAssets = assets.filter((asset) => {
+        const haystack = `${asset.hostname} ${asset.ip} ${asset.owner} ${asset.department}`.toLowerCase();
+        const matchesSearch = !assetSearch || haystack.includes(assetSearch.toLowerCase());
+        const matchesStatus = assetStatusFilter === 'All' || asset.status === assetStatusFilter;
+        const matchesType = assetTypeFilter === 'All' || asset.type === assetTypeFilter;
+        const matchesDepartment = assetDepartmentFilter === 'All' || asset.department === assetDepartmentFilter;
+        const matchesCriticality = assetCriticalityFilter === 'All' || asset.criticality === assetCriticalityFilter;
+        return matchesSearch && matchesStatus && matchesType && matchesDepartment && matchesCriticality;
+      });
+
+      const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) ?? null;
+      const relatedAssetIncidents = selectedAsset
+        ? logs.filter((log) => {
+            const haystack = `${log.message} ${log.source} ${log.eventType}`.toLowerCase();
+            return haystack.includes(selectedAsset.hostname.toLowerCase()) || haystack.includes(selectedAsset.ip.toLowerCase());
+          }).slice(0, 8)
+        : [];
+      const relatedAssetCases = selectedAsset
+        ? cases.filter((item) => {
+            const haystack = `${item.incident.message} ${item.incident.eventType} ${item.incident.source}`.toLowerCase();
+            return haystack.includes(selectedAsset.hostname.toLowerCase()) || haystack.includes(selectedAsset.ip.toLowerCase());
+          })
+        : [];
+      const relatedAssetEvents = selectedAsset
+        ? logs.filter((log) => {
+            const haystack = `${log.message} ${log.source} ${log.eventType}`.toLowerCase();
+            return haystack.includes(selectedAsset.hostname.toLowerCase()) || haystack.includes(selectedAsset.ip.toLowerCase());
+          }).slice(0, 5)
+        : [];
+      const relatedIocs = selectedAsset
+        ? iocs.filter((ioc) => {
+            const haystack = `${ioc.value} ${ioc.threatFamily}`.toLowerCase();
+            return haystack.includes(selectedAsset.hostname.toLowerCase()) || haystack.includes(selectedAsset.ip.toLowerCase());
+          })
+        : [];
+
+      return (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Asset Inventory</div>
+              <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Tracked Systems</h2>
+            </div>
+            <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{filteredAssets.length} assets</div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.75rem' }}>
+            <input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search hostname or IP" style={{ ...fieldStyle, minHeight: '44px' }} />
+            <select value={assetStatusFilter} onChange={(event) => setAssetStatusFilter(event.target.value as 'All' | AssetStatus)} style={fieldStyle}>
+              <option value="All">All Status</option>
+              {assetStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <select value={assetTypeFilter} onChange={(event) => setAssetTypeFilter(event.target.value as 'All' | AssetType)} style={fieldStyle}>
+              <option value="All">All Types</option>
+              {assetTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+            <select value={assetDepartmentFilter} onChange={(event) => setAssetDepartmentFilter(event.target.value)} style={fieldStyle}>
+              <option value="All">All Departments</option>
+              {assetDepartments.slice(1).map((department) => <option key={department} value={department}>{department}</option>)}
+            </select>
+            <select value={assetCriticalityFilter} onChange={(event) => setAssetCriticalityFilter(event.target.value as 'All' | AssetCriticality)} style={fieldStyle}>
+              <option value="All">All Criticality</option>
+              {assetCriticalities.map((level) => <option key={level} value={level}>{level}</option>)}
+            </select>
+          </div>
+
+          {filteredAssets.length === 0 ? (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '2rem', color: '#cbd5e1' }}>
+              No assets match the current filters.
+            </div>
+          ) : (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '0.25rem' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', minWidth: '980px', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: '#93c5fd', textAlign: 'left', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      {['Hostname', 'IP', 'Type', 'Owner', 'Department', 'Status', 'Criticality', 'Risk Score', 'Last Seen'].map((header) => (
+                        <th key={header} style={{ padding: '0.9rem 0.75rem', borderBottom: '1px solid rgba(148, 163, 184, 0.16)' }}>{header}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAssets.map((asset) => (
+                      <tr key={asset.id} onClick={() => setSelectedAssetId(asset.id)} style={{ cursor: 'pointer', borderBottom: '1px solid rgba(148, 163, 184, 0.1)', background: selectedAssetId === asset.id ? 'rgba(59, 130, 246, 0.08)' : 'transparent' }}>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#f8fafc', fontWeight: 700 }}>{asset.hostname}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.ip}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.type}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.owner}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.department}</td>
+                        <td style={{ padding: '0.85rem 0.75rem' }}><span style={{ color: asset.status === 'Isolated' ? '#fca5a5' : asset.status === 'Offline' ? '#94a3b8' : asset.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{asset.status}</span></td>
+                        <td style={{ padding: '0.85rem 0.75rem' }}><span style={{ color: asset.criticality === 'Critical' ? '#fca5a5' : asset.criticality === 'High' ? '#fbbf24' : asset.criticality === 'Medium' ? '#93c5fd' : '#86efac', fontWeight: 700 }}>{asset.criticality}</span></td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: asset.riskScore >= 80 ? '#fca5a5' : asset.riskScore >= 60 ? '#fbbf24' : '#86efac', fontWeight: 800 }}>{asset.riskScore}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{new Date(asset.lastSeen).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {selectedAsset && (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.1rem', display: 'grid', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Asset Detail</div>
+                  <h3 style={{ margin: '0.25rem 0 0', fontSize: '1.2rem' }}>{selectedAsset.hostname}</h3>
+                </div>
+                <button type="button" onClick={() => setSelectedAssetId(null)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', cursor: 'pointer' }}>×</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>IP</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedAsset.ip}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Type</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedAsset.type}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Owner</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedAsset.owner}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Department</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedAsset.department}</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Status</div>
+                  <div style={{ color: selectedAsset.status === 'Isolated' ? '#fca5a5' : selectedAsset.status === 'Offline' ? '#94a3b8' : selectedAsset.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{selectedAsset.status}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Criticality</div>
+                  <div style={{ color: selectedAsset.criticality === 'Critical' ? '#fca5a5' : selectedAsset.criticality === 'High' ? '#fbbf24' : selectedAsset.criticality === 'Medium' ? '#93c5fd' : '#86efac', fontWeight: 700 }}>{selectedAsset.criticality}</div>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Risk Score</div>
+                  <div style={{ fontWeight: 800, color: selectedAsset.riskScore >= 80 ? '#fca5a5' : selectedAsset.riskScore >= 60 ? '#fbbf24' : '#86efac' }}>{selectedAsset.riskScore}/100</div>
+                </div>
+                <div style={{ width: '100%', height: '10px', borderRadius: '999px', background: 'rgba(148,163,184,0.14)', overflow: 'hidden' }}>
+                  <div style={{ width: `${selectedAsset.riskScore}%`, height: '100%', borderRadius: '999px', background: selectedAsset.riskScore >= 80 ? 'linear-gradient(90deg, #f87171, #ef4444)' : selectedAsset.riskScore >= 60 ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #22c55e, #4ade80)' }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Related Incidents</div>
+                  {relatedAssetIncidents.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No matching incidents.</div> : relatedAssetIncidents.map((log) => (
+                    <div key={log.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{log.eventType} · {new Date(log.timestamp).toLocaleString()}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Related Cases</div>
+                  {relatedAssetCases.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No linked cases.</div> : relatedAssetCases.map((item) => (
+                    <div key={item.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{item.id} · {item.status}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Recent Events</div>
+                  {relatedAssetEvents.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No recent events.</div> : relatedAssetEvents.map((log) => (
+                    <div key={log.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{log.eventType} · {log.source}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>IOC Matches</div>
+                  {relatedIocs.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No IOC matches for this asset.</div> : relatedIocs.map((ioc) => (
+                    <div key={`${ioc.id}-${ioc.value}`} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{ioc.value} · {ioc.threatFamily}</div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Analyst Notes</div>
+                <textarea
+                  value={assetNoteDraft}
+                  onChange={(event) => setAssetNoteDraft(event.target.value)}
+                  placeholder="Add analyst note..."
+                  style={{ width: '100%', minHeight: '90px', resize: 'vertical', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.75)', color: '#e2e8f0', padding: '0.7rem 0.8rem', boxSizing: 'border-box' }}
+                />
+                <button type="button" onClick={addAssetNote} style={{ marginTop: '0.6rem', width: '100%', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', border: 'none', color: '#eff6ff', borderRadius: '12px', padding: '0.7rem 1rem', cursor: 'pointer', fontWeight: 700 }}>Add Note</button>
+                {selectedAsset.notes.length === 0 ? (
+                  <div style={{ marginTop: '0.7rem', color: '#cbd5e1', fontSize: '0.8rem' }}>No analyst notes recorded.</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '0.65rem', marginTop: '0.75rem' }}>
+                    {selectedAsset.notes.slice().sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).map((note) => (
+                      <div key={note.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '10px', padding: '0.7rem 0.8rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.35rem', color: '#cbd5e1', fontSize: '0.68rem' }}>
+                          <span>{note.analyst}</span>
+                          <span>{new Date(note.timestamp).toLocaleString()}</span>
+                        </div>
+                        <div style={{ color: '#e2e8f0', lineHeight: 1.6 }}>{note.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>
