@@ -16,7 +16,7 @@ import { evaluateDetectionRules } from './utils/detectionEngine';
 import { evaluateIOCs } from './utils/iocEngine';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Notifications' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Users' | 'Notifications' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -123,6 +123,26 @@ type AssetRecord = {
   notes: AssetNote[];
 };
 
+type UserStatus = 'Active' | 'Monitoring' | 'Restricted' | 'Offboarded';
+type UserNote = {
+  id: string;
+  timestamp: string;
+  analyst: string;
+  content: string;
+};
+type UserRecord = {
+  id: string;
+  name: string;
+  email: string;
+  department: string;
+  role: string;
+  devices: string[];
+  status: UserStatus;
+  riskScore: number;
+  lastLogin: string;
+  notes: UserNote[];
+};
+
 type IncidentDetail = {
   id: string;
   logId: string;
@@ -186,6 +206,28 @@ const defaultAssets: AssetRecord[] = [
   { id: 'asset-13', hostname: 'WEB-APP-01', ip: '203.0.113.84', type: 'Server', owner: 'C. Diaz', department: 'Web', status: 'Monitoring', criticality: 'Critical', riskScore: 96, lastSeen: '2026-08-31T13:11:00.000Z', notes: [] },
   { id: 'asset-14', hostname: 'SVR-DB-02', ip: '10.180.22.4', type: 'Database', owner: 'R. Flores', department: 'Data', status: 'Offline', criticality: 'High', riskScore: 65, lastSeen: '2026-08-31T12:20:00.000Z', notes: [] },
   { id: 'asset-15', hostname: 'WORKSTATION-17', ip: '172.16.55.14', type: 'Workstation', owner: 'R. Hughes', department: 'Operations', status: 'Isolated', criticality: 'Critical', riskScore: 88, lastSeen: '2026-08-31T13:53:00.000Z', notes: [] }
+];
+const defaultUsers: UserRecord[] = [
+  { id: 'usr-01', name: 'Alicia Morgan', email: 'alicia.morgan@sentinel.local', department: 'Security Operations', role: 'Analyst', devices: ['LAP-ALICIA-01', 'PHONE-ALICIA'], status: 'Active', riskScore: 24, lastLogin: '2026-08-31T14:05:00.000Z', notes: [] },
+  { id: 'usr-02', name: 'Marcus Lee', email: 'marcus.lee@sentinel.local', department: 'Finance', role: 'Finance Analyst', devices: ['FIN-WKS-06', 'MOBILE-ML-2'], status: 'Monitoring', riskScore: 46, lastLogin: '2026-08-31T13:20:00.000Z', notes: [] },
+  { id: 'usr-03', name: 'Priya Sharma', email: 'priya.sharma@sentinel.local', department: 'IT', role: 'Systems Engineer', devices: ['AD-01', 'LAP-PRIYA-14'], status: 'Active', riskScore: 31, lastLogin: '2026-08-31T13:54:00.000Z', notes: [] },
+  { id: 'usr-04', name: 'Daniel Brooks', email: 'daniel.brooks@sentinel.local', department: 'Engineering', role: 'Platform Engineer', devices: ['ENG-LAP-17', 'LAP-DB-09'], status: 'Active', riskScore: 38, lastLogin: '2026-08-31T12:48:00.000Z', notes: [] },
+  { id: 'usr-05', name: 'Sophia Nguyen', email: 'sophia.nguyen@sentinel.local', department: 'Human Resources', role: 'HR Manager', devices: ['HR-PC-04', 'IPHONE-SN'], status: 'Monitoring', riskScore: 44, lastLogin: '2026-08-31T12:31:00.000Z', notes: [] },
+  { id: 'usr-06', name: 'Rafael Torres', email: 'rafael.torres@sentinel.local', department: 'Operations', role: 'Operations Lead', devices: ['FILE-SVR-12', 'LAP-RAFAEL-07'], status: 'Active', riskScore: 53, lastLogin: '2026-08-31T13:41:00.000Z', notes: [] },
+  { id: 'usr-07', name: 'Naomi Reed', email: 'naomi.reed@sentinel.local', department: 'Network', role: 'Network Engineer', devices: ['DMZ-FW-01', 'LAP-NAOMI-02'], status: 'Active', riskScore: 34, lastLogin: '2026-08-31T13:48:00.000Z', notes: [] },
+  { id: 'usr-08', name: 'Kenji Sato', email: 'kenji.sato@sentinel.local', department: 'Cloud', role: 'Cloud Architect', devices: ['EKS-CLUSTER-01', 'LAP-KENJI-11'], status: 'Restricted', riskScore: 68, lastLogin: '2026-08-31T11:50:00.000Z', notes: [] },
+  { id: 'usr-09', name: 'Samantha Green', email: 'samantha.green@sentinel.local', department: 'Finance', role: 'Accountant', devices: ['FIN-LAP-22', 'PHONE-SG-3'], status: 'Monitoring', riskScore: 57, lastLogin: '2026-08-31T13:02:00.000Z', notes: [] },
+  { id: 'usr-10', name: 'Darius Roberts', email: 'darius.roberts@sentinel.local', department: 'IT', role: 'Endpoint Administrator', devices: ['MAIL-GW-03', 'LAP-DARIUS-06'], status: 'Active', riskScore: 30, lastLogin: '2026-08-31T14:07:00.000Z', notes: [] },
+  { id: 'usr-11', name: 'Tanya Kelly', email: 'tanya.kelly@sentinel.local', department: 'Sales', role: 'Account Executive', devices: ['SALES-LAP-12', 'IPHONE-TK'], status: 'Restricted', riskScore: 62, lastLogin: '2026-08-31T12:18:00.000Z', notes: [] },
+  { id: 'usr-12', name: 'Carlos Diaz', email: 'carlos.diaz@sentinel.local', department: 'Web', role: 'Web Engineer', devices: ['WEB-APP-01', 'LAP-CARLOS-05'], status: 'Active', riskScore: 40, lastLogin: '2026-08-31T13:11:00.000Z', notes: [] },
+  { id: 'usr-13', name: 'Rosa Flores', email: 'rosa.flores@sentinel.local', department: 'Data', role: 'Database Administrator', devices: ['SVR-DB-02', 'LAP-ROSA-13'], status: 'Monitoring', riskScore: 55, lastLogin: '2026-08-31T12:39:00.000Z', notes: [] },
+  { id: 'usr-14', name: 'Ryan Hughes', email: 'ryan.hughes@sentinel.local', department: 'Operations', role: 'Field Technician', devices: ['WORKSTATION-17', 'LAP-RYAN-04'], status: 'Restricted', riskScore: 73, lastLogin: '2026-08-31T11:42:00.000Z', notes: [] },
+  { id: 'usr-15', name: 'Lina Park', email: 'lina.park@sentinel.local', department: 'Data', role: 'Data Analyst', devices: ['SQL-DB-01', 'LAP-LINA-10'], status: 'Active', riskScore: 33, lastLogin: '2026-08-31T13:36:00.000Z', notes: [] },
+  { id: 'usr-16', name: 'Mason Brown', email: 'mason.brown@sentinel.local', department: 'Finance', role: 'Controller', devices: ['FIN-WKS-06', 'LAP-MASON-08'], status: 'Monitoring', riskScore: 52, lastLogin: '2026-08-31T13:06:00.000Z', notes: [] },
+  { id: 'usr-17', name: 'Ava Patel', email: 'ava.patel@sentinel.local', department: 'Operations', role: 'Security Analyst', devices: ['FILE-SVR-12', 'PHONE-AVA'], status: 'Active', riskScore: 29, lastLogin: '2026-08-31T13:50:00.000Z', notes: [] },
+  { id: 'usr-18', name: 'Jonathan Price', email: 'jonathan.price@sentinel.local', department: 'Security Operations', role: 'Incident Responder', devices: ['LAP-JONATHAN-03', 'PHONE-JP'], status: 'Active', riskScore: 27, lastLogin: '2026-08-31T14:11:00.000Z', notes: [] },
+  { id: 'usr-19', name: 'Emma Chen', email: 'emma.chen@sentinel.local', department: 'Identity', role: 'IAM Engineer', devices: ['VPN-GW-01', 'LAP-EMMA-15'], status: 'Monitoring', riskScore: 49, lastLogin: '2026-08-31T13:23:00.000Z', notes: [] },
+  { id: 'usr-20', name: 'Oliver Grant', email: 'oliver.grant@sentinel.local', department: 'Legal', role: 'Legal Counsel', devices: ['LAP-OLIVER-01', 'PHONE-OG'], status: 'Offboarded', riskScore: 76, lastLogin: '2026-08-30T17:48:00.000Z', notes: [] }
 ];
 const ipv4Regex = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.|$)){4}$/;
 const commonSourceOptions = [...sourceOptions];
@@ -337,6 +379,14 @@ function App() {
       return defaultAssets;
     }
   });
+  const [users, setUsers] = useState<UserRecord[]>(() => {
+    try {
+      const savedUsers = localStorage.getItem('sentinel-users');
+      return savedUsers ? JSON.parse(savedUsers) as UserRecord[] : defaultUsers;
+    } catch {
+      return defaultUsers;
+    }
+  });
   const [employeeTickets, setEmployeeTickets] = useState<EmployeeTicket[]>(() => {
     try {
       const savedTickets = localStorage.getItem('sentinel-employee-tickets');
@@ -347,9 +397,15 @@ function App() {
   });
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
   const [assetNoteDraft, setAssetNoteDraft] = useState('');
+  const [userNoteDraft, setUserNoteDraft] = useState('');
   const [assetSearch, setAssetSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState<'All' | UserStatus>('All');
+  const [userDepartmentFilter, setUserDepartmentFilter] = useState<'All' | string>('All');
+  const [userRoleFilter, setUserRoleFilter] = useState<'All' | string>('All');
   const [assetStatusFilter, setAssetStatusFilter] = useState<'All' | AssetStatus>('All');
   const [assetTypeFilter, setAssetTypeFilter] = useState<'All' | AssetType>('All');
   const [assetDepartmentFilter, setAssetDepartmentFilter] = useState<'All' | string>('All');
@@ -387,6 +443,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('sentinel-assets', JSON.stringify(assets));
   }, [assets]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-users', JSON.stringify(users));
+  }, [users]);
 
   useEffect(() => {
     localStorage.setItem('sentinel-employee-tickets', JSON.stringify(employeeTickets));
@@ -1170,6 +1230,27 @@ function App() {
     setAssetNoteDraft('');
   };
 
+  const addUserNote = () => {
+    if (!selectedUserId) return;
+    const content = userNoteDraft.trim();
+    if (!content) return;
+
+    const timestamp = new Date().toISOString();
+    setUsers((current) => current.map((user) => user.id === selectedUserId
+      ? {
+          ...user,
+          notes: [...user.notes, {
+            id: `${user.id}-note-${Date.now()}`,
+            timestamp,
+            analyst: auth.user.email,
+            content
+          }].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        }
+      : user));
+
+    setUserNoteDraft('');
+  };
+
   const handleComposerChange = (field: keyof EventComposerState, value: string) => {
     setComposer((current) => ({ ...current, [field]: value }));
     setComposerError('');
@@ -1264,6 +1345,7 @@ function App() {
     { label: 'Incidents', icon: '⚑' },
     { label: 'Cases', icon: '▤' },
     { label: 'Assets', icon: '▣' },
+    { label: 'Users', icon: '◎' },
     { label: 'Notifications', icon: '◔' },
     { label: 'Events', icon: '◫' },
     { label: 'Rules', icon: '◇' },
@@ -1429,6 +1511,224 @@ function App() {
               </div>
             ))}
           </div>
+        </section>
+      );
+    }
+
+    if (activePage === 'Users') {
+      const userDepartments = ['All', ...Array.from(new Set(users.map((user) => user.department)))];
+      const userRoles = ['All', ...Array.from(new Set(users.map((user) => user.role)))];
+      const filteredUsers = users.filter((user) => {
+        const haystack = `${user.name} ${user.email} ${user.department} ${user.role}`.toLowerCase();
+        const matchesSearch = !userSearch || haystack.includes(userSearch.toLowerCase());
+        const matchesStatus = userStatusFilter === 'All' || user.status === userStatusFilter;
+        const matchesDepartment = userDepartmentFilter === 'All' || user.department === userDepartmentFilter;
+        const matchesRole = userRoleFilter === 'All' || user.role === userRoleFilter;
+        return matchesSearch && matchesStatus && matchesDepartment && matchesRole;
+      });
+      const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
+      const selectedUserAssets = selectedUser
+        ? assets.filter((asset) => {
+            const ownerMatch = asset.owner.toLowerCase().includes(selectedUser.name.split(' ')[0].toLowerCase()) || asset.owner.toLowerCase().includes(selectedUser.name.split(' ').slice(-1)[0].toLowerCase());
+            const deviceMatch = selectedUser.devices.some((device) => {
+              const deviceName = device.toLowerCase();
+              return asset.hostname.toLowerCase().includes(deviceName) || deviceName.includes(asset.hostname.toLowerCase());
+            });
+            return ownerMatch || deviceMatch;
+          })
+        : [];
+      const selectedUserIncidents = selectedUser
+        ? logs.filter((log) => {
+            const aliases = [selectedUser.name, selectedUser.email.split('@')[0], ...selectedUser.devices].map((value) => value.toLowerCase());
+            const haystack = `${log.message} ${log.source} ${log.eventType}`.toLowerCase();
+            return aliases.some((alias) => haystack.includes(alias));
+          }).slice(0, 8)
+        : [];
+      const selectedUserTickets = selectedUser
+        ? employeeTickets.filter((ticket) => {
+            const ticketText = `${ticket.department} ${ticket.device} ${ticket.incidentType}`.toLowerCase();
+            return ticketText.includes(selectedUser.department.toLowerCase()) || selectedUser.devices.some((device) => ticketText.includes(device.toLowerCase()));
+          })
+        : [];
+      const selectedUserCases = selectedUser
+        ? cases.filter((item) => {
+            const haystack = `${item.incident.message} ${item.incident.eventType} ${item.incident.source}`.toLowerCase();
+            const aliases = [selectedUser.name, selectedUser.email.split('@')[0], ...selectedUser.devices].map((value) => value.toLowerCase());
+            return selectedUserAssets.some((asset) => haystack.includes(asset.hostname.toLowerCase()) || haystack.includes(asset.ip.toLowerCase())) || aliases.some((alias) => haystack.includes(alias));
+          })
+        : [];
+      const selectedUserIocs = selectedUser
+        ? iocs.filter((ioc) => {
+            const haystack = `${ioc.value} ${ioc.threatFamily}`.toLowerCase();
+            const aliases = [selectedUser.name, ...selectedUser.devices].map((value) => value.toLowerCase());
+            return aliases.some((alias) => haystack.includes(alias));
+          })
+        : [];
+
+      return (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>User Directory</div>
+              <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Employees & Accounts</h2>
+            </div>
+            <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{filteredUsers.length} users</div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+            <input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search user, email, role" style={{ ...fieldStyle, minHeight: '44px' }} />
+            <select value={userDepartmentFilter} onChange={(event) => setUserDepartmentFilter(event.target.value)} style={fieldStyle}>
+              {userDepartments.map((department) => <option key={department} value={department}>{department === 'All' ? 'All Departments' : department}</option>)}
+            </select>
+            <select value={userRoleFilter} onChange={(event) => setUserRoleFilter(event.target.value)} style={fieldStyle}>
+              {userRoles.map((role) => <option key={role} value={role}>{role === 'All' ? 'All Roles' : role}</option>)}
+            </select>
+            <select value={userStatusFilter} onChange={(event) => setUserStatusFilter(event.target.value as 'All' | UserStatus)} style={fieldStyle}>
+              <option value="All">All Status</option>
+              <option value="Active">Active</option>
+              <option value="Monitoring">Monitoring</option>
+              <option value="Restricted">Restricted</option>
+              <option value="Offboarded">Offboarded</option>
+            </select>
+          </div>
+
+          {filteredUsers.length === 0 ? (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '2rem', color: '#cbd5e1' }}>
+              No users match the current filters.
+            </div>
+          ) : (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '0.25rem' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', minWidth: '980px', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: '#93c5fd', textAlign: 'left', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      {['Name', 'Email', 'Department', 'Role', 'Devices', 'Status', 'Risk Score', 'Last Login'].map((header) => (
+                        <th key={header} style={{ padding: '0.9rem 0.75rem', borderBottom: '1px solid rgba(148, 163, 184, 0.16)' }}>{header}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUsers.map((user) => (
+                      <tr key={user.id} onClick={() => setSelectedUserId(user.id)} style={{ cursor: 'pointer', borderBottom: '1px solid rgba(148, 163, 184, 0.1)', background: selectedUserId === user.id ? 'rgba(59, 130, 246, 0.08)' : 'transparent' }}>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#f8fafc', fontWeight: 700 }}>{user.name}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.email}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.department}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.role}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.devices.join(', ')}</td>
+                        <td style={{ padding: '0.85rem 0.75rem' }}><span style={{ color: user.status === 'Offboarded' ? '#94a3b8' : user.status === 'Restricted' ? '#fca5a5' : user.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{user.status}</span></td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: user.riskScore >= 70 ? '#fca5a5' : user.riskScore >= 45 ? '#fbbf24' : '#86efac', fontWeight: 800 }}>{user.riskScore}</td>
+                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{new Date(user.lastLogin).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {selectedUser && (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.1rem', display: 'grid', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>User Detail</div>
+                  <h3 style={{ margin: '0.25rem 0 0', fontSize: '1.2rem' }}>{selectedUser.name}</h3>
+                </div>
+                <button type="button" onClick={() => setSelectedUserId(null)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', cursor: 'pointer' }}>×</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Email</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedUser.email}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Role</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedUser.role}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Department</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedUser.department}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Status</div>
+                  <div style={{ color: selectedUser.status === 'Offboarded' ? '#94a3b8' : selectedUser.status === 'Restricted' ? '#fca5a5' : selectedUser.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{selectedUser.status}</div>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.7rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Risk Score</div>
+                  <div style={{ fontWeight: 800, color: selectedUser.riskScore >= 70 ? '#fca5a5' : selectedUser.riskScore >= 45 ? '#fbbf24' : '#86efac' }}>{selectedUser.riskScore}/100</div>
+                </div>
+                <div style={{ width: '100%', height: '10px', borderRadius: '999px', background: 'rgba(148,163,184,0.14)', overflow: 'hidden' }}>
+                  <div style={{ width: `${selectedUser.riskScore}%`, height: '100%', borderRadius: '999px', background: selectedUser.riskScore >= 70 ? 'linear-gradient(90deg, #f87171, #ef4444)' : selectedUser.riskScore >= 45 ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #22c55e, #4ade80)' }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Assigned Assets</div>
+                  {selectedUserAssets.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No linked assets.</div> : selectedUserAssets.map((asset) => (
+                    <div key={asset.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{asset.hostname} · {asset.ip} · {asset.type}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Related Incidents</div>
+                  {selectedUserIncidents.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No related incidents.</div> : selectedUserIncidents.map((log) => (
+                    <div key={log.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{log.eventType} · {new Date(log.timestamp).toLocaleString()}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Submitted Tickets</div>
+                  {selectedUserTickets.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No submitted tickets.</div> : selectedUserTickets.map((ticket) => (
+                    <div key={ticket.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{ticket.id} · {ticket.status} · {ticket.incidentType}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Active Cases</div>
+                  {selectedUserCases.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No active cases.</div> : selectedUserCases.map((item) => (
+                    <div key={item.id} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{item.id} · {item.status} · {item.priority}</div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>IOC Exposure</div>
+                  {selectedUserIocs.length === 0 ? <div style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>No observed IOC exposure.</div> : selectedUserIocs.map((ioc) => (
+                    <div key={`${ioc.id}-${ioc.value}`} style={{ color: '#dbeafe', fontSize: '0.76rem', lineHeight: 1.7, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>{ioc.value} · {ioc.threatFamily}</div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Analyst Notes</div>
+                <textarea
+                  value={userNoteDraft}
+                  onChange={(event) => setUserNoteDraft(event.target.value)}
+                  placeholder="Add analyst note..."
+                  style={{ width: '100%', minHeight: '90px', resize: 'vertical', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.75)', color: '#e2e8f0', padding: '0.7rem 0.8rem', boxSizing: 'border-box' }}
+                />
+                <button type="button" onClick={addUserNote} style={{ marginTop: '0.6rem', width: '100%', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', border: 'none', color: '#eff6ff', borderRadius: '12px', padding: '0.7rem 1rem', cursor: 'pointer', fontWeight: 700 }}>Add Note</button>
+                {selectedUser.notes.length === 0 ? (
+                  <div style={{ marginTop: '0.7rem', color: '#cbd5e1', fontSize: '0.8rem' }}>No notes recorded for this user.</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '0.65rem', marginTop: '0.75rem' }}>
+                    {selectedUser.notes.slice().sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).map((note) => (
+                      <div key={note.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '10px', padding: '0.7rem 0.8rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.35rem', color: '#cbd5e1', fontSize: '0.68rem' }}>
+                          <span>{note.analyst}</span>
+                          <span>{new Date(note.timestamp).toLocaleString()}</span>
+                        </div>
+                        <div style={{ color: '#e2e8f0', lineHeight: 1.6 }}>{note.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       );
     }
