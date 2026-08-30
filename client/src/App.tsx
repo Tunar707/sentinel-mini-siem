@@ -8,6 +8,7 @@ import SearchBar from './components/SearchBar';
 import RulesPage, { defaultRules } from './components/RulesPage';
 import ThreatIntelPage, { defaultIocs } from './components/ThreatIntelPage';
 import ReportsPage from './components/ReportsPage';
+import EmployeePortal, { type EmployeeTicket, type TicketStatus } from './components/EmployeePortal';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
 import type { DetectionRule } from './types/rule';
 import type { IOC } from './types/ioc';
@@ -57,7 +58,8 @@ type TimelineEntry = {
   analyst?: string;
 };
 
-type CaseStatus = 'New' | 'Triage' | 'Investigating' | 'Contained' | 'Recovery' | 'Resolved';
+type CaseStatus = 'Reported' | 'New' | 'Triage' | 'Investigating' | 'Contained' | 'Recovery' | 'Resolved';
+type CaseSource = 'SOC Console' | 'Employee Portal';
 type CasePriority = 'P1' | 'P2' | 'P3' | 'P4';
 type CaseTimelineEntry = {
   id: string;
@@ -81,6 +83,7 @@ type CaseRecord = {
   assignedAnalyst: AnalystName;
   sla: string;
   createdAt: string;
+  source: CaseSource;
   timeline: CaseTimelineEntry[];
   notes: CaseNote[];
 };
@@ -125,7 +128,7 @@ const sourceOptions = ['Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIE
 const eventTypeOptions = ['Failed Login', 'Malware Detection', 'Port Scan', 'Brute Force', 'Critical Alert', 'Privilege Escalation', 'Suspicious Process', 'Data Exfiltration', 'Lateral Movement', 'Shadow IT'];
 const severityOptions: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 const workflowStatuses: WorkflowStatus[] = ['New', 'Investigating', 'Contained', 'Resolved'];
-const caseStatuses: CaseStatus[] = ['New', 'Triage', 'Investigating', 'Contained', 'Recovery', 'Resolved'];
+const caseStatuses: CaseStatus[] = ['Reported', 'New', 'Triage', 'Investigating', 'Contained', 'Recovery', 'Resolved'];
 const casePriorities: CasePriority[] = ['P1', 'P2', 'P3', 'P4'];
 const caseSlaOptions = ['4 hours', '8 hours', '24 hours', '72 hours'];
 const demoAnalysts: AnalystName[] = ['Tunar', 'Sarah', 'Michael', 'Emma'];
@@ -223,6 +226,7 @@ function App() {
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activePage, setActivePage] = useState<PageName>('Dashboard');
+  const [portalMode, setPortalMode] = useState<'soc' | 'employee'>('soc');
   const [composer, setComposer] = useState<EventComposerState>(defaultComposerState);
   const [composerError, setComposerError] = useState('');
   const [composerSuccess, setComposerSuccess] = useState('');
@@ -258,6 +262,14 @@ function App() {
       return [];
     }
   });
+  const [employeeTickets, setEmployeeTickets] = useState<EmployeeTicket[]>(() => {
+    try {
+      const savedTickets = localStorage.getItem('sentinel-employee-tickets');
+      return savedTickets ? JSON.parse(savedTickets) as EmployeeTicket[] : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
@@ -283,6 +295,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('sentinel-cases', JSON.stringify(cases));
   }, [cases]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-employee-tickets', JSON.stringify(employeeTickets));
+  }, [employeeTickets]);
 
   const fetchHealth = async (token: string) => {
     try {
@@ -470,12 +486,73 @@ function App() {
     return () => source.close();
   }, [auth?.token]);
 
+  function handleEmployeeTicketSubmit(ticket: EmployeeTicket) {
+    const createdAt = new Date().toISOString();
+    const caseId = `CASE-${createdAt.slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    const employeeTicket: EmployeeTicket = {
+      ...ticket,
+      caseId,
+      status: 'Open',
+      assignedAnalyst: 'Pending triage'
+    };
+
+    const incident: LogEntry = {
+      id: `employee-${ticket.id}`,
+      timestamp: createdAt,
+      source: 'Employee Portal',
+      eventType: ticket.incidentType,
+      severity: ticket.priority === 'P1' ? 'CRITICAL' : ticket.priority === 'P2' ? 'HIGH' : ticket.priority === 'P3' ? 'MEDIUM' : 'LOW',
+      message: `${ticket.department} employee report: ${ticket.description} | Device: ${ticket.device}`
+    };
+
+    const nextCase: CaseRecord = {
+      id: caseId,
+      incidentId: incident.id,
+      incident,
+      priority: ticket.priority,
+      status: 'Reported',
+      assignedAnalyst: 'Tunar',
+      sla: ticket.priority === 'P1' ? '4 hours' : ticket.priority === 'P2' ? '8 hours' : '24 hours',
+      createdAt,
+      source: 'Employee Portal',
+      timeline: [{
+        id: `${caseId}-reported`,
+        type: 'created',
+        timestamp: createdAt,
+        message: 'Employee-submitted case reported to SOC',
+        analyst: 'Employee Portal'
+      }],
+      notes: []
+    };
+
+    setEmployeeTickets((current) => [employeeTicket, ...current]);
+    setCases((current) => [nextCase, ...current]);
+    setSelectedCaseId(caseId);
+    setActivePage('Cases');
+  }
+
   if (!auth) {
     return <Login onLogin={(data) => {
       setAuth(data);
       fetchHealth(data.token);
       fetchLogs(data.token);
     }} />;
+  }
+
+  if (portalMode === 'employee') {
+    return (
+      <EmployeePortal
+        employeeName={auth.user.email}
+        tickets={employeeTickets}
+        onTicketSubmit={handleEmployeeTicketSubmit}
+        onSwitchToSOC={() => setPortalMode('soc')}
+        onLogout={() => {
+          localStorage.removeItem('token');
+          setAuth(null);
+          setPortalMode('soc');
+        }}
+      />
+    );
   }
 
   const handleIncidentSelect = async (incidentId: string) => {
@@ -630,6 +707,7 @@ function App() {
       assignedAnalyst: 'Tunar',
       sla: incident.severity === 'CRITICAL' ? '4 hours' : '8 hours',
       createdAt,
+      source: 'SOC Console',
       timeline: [{
         id: `${caseId}-created`,
         type: 'created',
@@ -646,12 +724,56 @@ function App() {
     setActivePage('Cases');
   };
 
+  const mapCaseStatusToTicketStatus = (status: CaseStatus): TicketStatus => {
+    switch (status) {
+      case 'Reported':
+      case 'New':
+      case 'Triage':
+        return 'Open';
+      case 'Investigating':
+      case 'Contained':
+      case 'Recovery':
+        return 'Investigating';
+      case 'Resolved':
+        return 'Resolved';
+      default:
+        return 'Open';
+    }
+  };
+
+  const syncEmployeeTicketFromCase = (nextCase: CaseRecord, timelineEntry?: CaseTimelineEntry) => {
+    if (nextCase.source !== 'Employee Portal') return;
+
+    setEmployeeTickets((current) => current.map((ticket) => ticket.caseId !== nextCase.id ? ticket : {
+      ...ticket,
+      status: mapCaseStatusToTicketStatus(nextCase.status),
+      priority: nextCase.priority,
+      assignedAnalyst: nextCase.assignedAnalyst,
+      timeline: timelineEntry
+        ? [...ticket.timeline, {
+            id: timelineEntry.id,
+            timestamp: timelineEntry.timestamp,
+            message: timelineEntry.message
+          }].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        : ticket.timeline
+    }));
+  };
+
   const updateCase = (caseId: string, updates: Partial<CaseRecord>, timelineEntry?: CaseTimelineEntry) => {
-    setCases((current) => current.map((item) => item.id === caseId ? {
-      ...item,
-      ...updates,
-      timeline: timelineEntry ? [...item.timeline, timelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : item.timeline
-    } : item));
+    setCases((current) => {
+      const updatedCases = current.map((item) => item.id === caseId ? {
+        ...item,
+        ...updates,
+        timeline: timelineEntry ? [...item.timeline, timelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : item.timeline
+      } : item);
+
+      const updatedCase = updatedCases.find((item) => item.id === caseId);
+      if (updatedCase) {
+        syncEmployeeTicketFromCase(updatedCase, timelineEntry);
+      }
+
+      return updatedCases;
+    });
   };
 
   const updateCaseStatus = (status: CaseStatus) => {
@@ -887,7 +1009,14 @@ function App() {
                   }}
                 >
                   <div>
-                    <div style={{ color: '#bfdbfe', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.08em' }}>{item.id}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <div style={{ color: '#bfdbfe', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.08em' }}>{item.id}</div>
+                      {item.source === 'Employee Portal' && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: '999px', background: 'rgba(59, 130, 246, 0.18)', border: '1px solid rgba(96, 165, 250, 0.28)', color: '#bfdbfe', padding: '0.18rem 0.5rem', fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                          Employee Portal
+                        </span>
+                      )}
+                    </div>
                     <div style={{ marginTop: '0.35rem', fontWeight: 700 }}>{item.incident.eventType}</div>
                     <div style={{ marginTop: '0.2rem', color: '#94a3b8', fontSize: '0.78rem' }}>Incident {item.incident.id}</div>
                   </div>
@@ -1715,6 +1844,10 @@ function App() {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', padding: '0.2rem', gap: '0.2rem', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
+                  <button type="button" style={{ border: '1px solid rgba(96, 165, 250, 0.35)', background: 'rgba(59, 130, 246, 0.18)', color: '#dbeafe', borderRadius: '8px', padding: '0.45rem 0.65rem', cursor: 'default', fontSize: '0.75rem', fontWeight: 700 }}>SOC Console</button>
+                  <button type="button" onClick={() => setPortalMode('employee')} style={{ border: 'none', background: 'transparent', color: '#94a3b8', borderRadius: '8px', padding: '0.45rem 0.65rem', cursor: 'pointer', fontSize: '0.75rem' }}>Employee Portal</button>
+                </div>
                 <div style={{
                   border: '1px solid rgba(148, 163, 184, 0.2)',
                   borderRadius: '12px',
@@ -2019,7 +2152,14 @@ function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
               <div>
                 <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Case Drawer</div>
-                <h3 style={{ margin: '0.3rem 0 0', fontSize: '1.2rem' }}>{selectedCase.id}</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', flexWrap: 'wrap', marginTop: '0.3rem' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.2rem' }}>{selectedCase.id}</h3>
+                  {selectedCase.source === 'Employee Portal' && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: '999px', background: 'rgba(59, 130, 246, 0.18)', border: '1px solid rgba(96, 165, 250, 0.28)', color: '#bfdbfe', padding: '0.18rem 0.56rem', fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      Employee Portal
+                    </span>
+                  )}
+                </div>
               </div>
               <button type="button" onClick={() => setSelectedCaseId(null)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', cursor: 'pointer' }}>×</button>
             </div>
