@@ -16,7 +16,7 @@ import { evaluateDetectionRules } from './utils/detectionEngine';
 import { evaluateIOCs } from './utils/iocEngine';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Notifications' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -86,6 +86,18 @@ type CaseRecord = {
   source: CaseSource;
   timeline: CaseTimelineEntry[];
   notes: CaseNote[];
+};
+
+type NotificationKind = 'Incident' | 'Case' | 'IOC' | 'Employee' | 'System';
+type NotificationFilter = 'All' | NotificationKind;
+type NotificationRecord = {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  message: string;
+  createdAt: string;
+  read: boolean;
+  relatedId?: string;
 };
 
 type AssetStatus = 'Active' | 'Monitoring' | 'Isolated' | 'Offline';
@@ -278,6 +290,18 @@ function App() {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [selectedIncidentDetail, setSelectedIncidentDetail] = useState<IncidentDetail | null>(null);
   const [incidentNoteDraft, setIncidentNoteDraft] = useState('');
+  const [notifications, setNotifications] = useState<NotificationRecord[]>(() => {
+    try {
+      const savedNotifications = localStorage.getItem('sentinel-notifications');
+      return savedNotifications ? JSON.parse(savedNotifications) as NotificationRecord[] : [];
+    } catch {
+      return [];
+    }
+  });
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [toastNotifications, setToastNotifications] = useState<NotificationRecord[]>([]);
+  const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('All');
+  const [now, setNow] = useState(Date.now());
   const [rules, setRules] = useState<DetectionRule[]>(() => {
     try {
       const savedRules = localStorage.getItem('sentinel-detection-rules');
@@ -357,6 +381,10 @@ function App() {
   }, [cases]);
 
   useEffect(() => {
+    localStorage.setItem('sentinel-notifications', JSON.stringify(notifications));
+  }, [notifications]);
+
+  useEffect(() => {
     localStorage.setItem('sentinel-assets', JSON.stringify(assets));
   }, [assets]);
 
@@ -426,6 +454,22 @@ function App() {
       iocMatches: [{ value: ioc.value, threatFamily: ioc.threatFamily }]
     }));
     const createdIncidents = [...ruleIncidents, ...iocIncidents];
+
+    if (createdIncidents.length > 0) {
+      addNotification('Incident', 'New Critical Incident', `${incoming.eventType} from ${incoming.source} triggered a critical incident workflow.`, incoming.id);
+    }
+
+    if (ruleMatches.length > 0) {
+      ruleMatches.forEach(({ rule }) => {
+        addNotification('Incident', 'Detection Rule Trigger', `${rule.name} matched ${incoming.eventType} from ${incoming.source}.`, incoming.id);
+      });
+    }
+
+    if (iocMatches.length > 0) {
+      iocMatches.forEach(({ ioc }) => {
+        addNotification('IOC', 'IOC Match', `${ioc.threatFamily} IOC ${ioc.value} matched ${incoming.source}.`, incoming.id);
+      });
+    }
 
     setDetectedIncidents((current) => {
       const existingIds = new Set(current.map((incident) => incident.log.id));
@@ -499,6 +543,11 @@ function App() {
     : SOC_TEMPLATE_LIBRARY.filter((template) => template.category === templateCategory);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
       fetchHealth(token);
@@ -550,6 +599,33 @@ function App() {
     return () => source.close();
   }, [auth?.token]);
 
+  const addNotification = (kind: NotificationKind, title: string, message: string, relatedId?: string) => {
+    const nextNotification: NotificationRecord = {
+      id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      kind,
+      title,
+      message,
+      createdAt: new Date().toISOString(),
+      read: false,
+      relatedId
+    };
+
+    setNotifications((current) => [nextNotification, ...current]);
+    setToastNotifications((current) => [nextNotification, ...current].slice(0, 3));
+    return nextNotification;
+  };
+
+  const markNotificationRead = (id: string) => {
+    setNotifications((current) => current.map((item) => item.id === id ? { ...item, read: true } : item));
+  };
+
+  const markAllNotificationsRead = () => {
+    setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+  };
+
+  const unreadNotifications = notifications.filter((item) => !item.read);
+  const unreadCount = unreadNotifications.length;
+
   function handleEmployeeTicketSubmit(ticket: EmployeeTicket) {
     const createdAt = new Date().toISOString();
     const caseId = `CASE-${createdAt.slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
@@ -591,9 +667,22 @@ function App() {
 
     setEmployeeTickets((current) => [employeeTicket, ...current]);
     setCases((current) => [nextCase, ...current]);
+    addNotification('Employee', 'Employee Ticket Submitted', `Ticket ${employeeTicket.id} was submitted for ${ticket.incidentType}.`, employeeTicket.id);
     setSelectedCaseId(caseId);
     setActivePage('Cases');
   }
+
+  useEffect(() => {
+    if (toastNotifications.length === 0) return;
+
+    const timers = toastNotifications.map((toast) => window.setTimeout(() => {
+      setToastNotifications((current) => current.filter((item) => item.id !== toast.id));
+    }, 5000));
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [toastNotifications]);
 
   const fieldStyle: React.CSSProperties = {
     width: '100%',
@@ -625,6 +714,47 @@ function App() {
     ? getMitreMapping(drawerIncident.incident.eventType)
     : { id: 'N/A', tactic: 'Unknown', color: '#64748b' };
   const selectedCase = cases.find((item) => item.id === selectedCaseId) ?? null;
+  const getSlaWindowMs = (priority: CasePriority) => {
+    switch (priority) {
+      case 'P1': return 15 * 60 * 1000;
+      case 'P2': return 60 * 60 * 1000;
+      case 'P3': return 4 * 60 * 60 * 1000;
+      case 'P4': return 24 * 60 * 60 * 1000;
+      default: return 4 * 60 * 60 * 1000;
+    }
+  };
+
+  const getCaseSlaStatus = (item: CaseRecord) => {
+    const totalMs = getSlaWindowMs(item.priority);
+    const deadline = new Date(item.createdAt).getTime() + totalMs;
+    const remainingMs = deadline - now;
+
+    if (remainingMs <= 0) {
+      return {
+        label: 'Breached',
+        remainingMs,
+        severity: 'Red',
+        color: '#ef4444',
+        remainingText: 'Breached'
+      };
+    }
+
+    const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+    const hours = Math.floor(remainingSeconds / 3600);
+    const minutes = Math.floor((remainingSeconds % 3600) / 60);
+    const seconds = remainingSeconds % 60;
+    const state = remainingMs <= totalMs * 0.25 ? 'Amber' : 'Green';
+
+    return {
+      label: state === 'Amber' ? 'Warning' : 'Healthy',
+      remainingMs,
+      severity: state,
+      color: state === 'Amber' ? '#fbbf24' : '#22c55e',
+      remainingText: `${hours}h ${minutes}m ${seconds}s`
+    };
+  };
+
+  const selectedCaseSla = selectedCase ? getCaseSlaStatus(selectedCase) : null;
   const drawerCaseIncident = drawerIncident
     ? logs.find((log) => log.id === drawerIncident.incident.logId) ?? {
         id: drawerIncident.incident.logId,
@@ -966,6 +1096,11 @@ function App() {
   const updateCaseStatus = (status: CaseStatus) => {
     const selectedCase = cases.find((item) => item.id === selectedCaseId);
     if (!selectedCase) return;
+
+    if (status === 'Resolved') {
+      addNotification('Case', 'Case Resolved', `Case ${selectedCase.id} was resolved by ${auth.user.email}.`, selectedCase.id);
+    }
+
     updateCase(selectedCase.id, { status }, {
       id: `${selectedCase.id}-status-${Date.now()}`,
       type: 'status',
@@ -978,6 +1113,11 @@ function App() {
   const updateCaseAssignment = (assignedAnalyst: AnalystName) => {
     const selectedCase = cases.find((item) => item.id === selectedCaseId);
     if (!selectedCase) return;
+
+    if (selectedCase.assignedAnalyst !== assignedAnalyst) {
+      addNotification('Case', 'Case Assigned', `${assignedAnalyst} was assigned to case ${selectedCase.id}.`, selectedCase.id);
+    }
+
     updateCase(selectedCase.id, { assignedAnalyst }, {
       id: `${selectedCase.id}-assignment-${Date.now()}`,
       type: 'assignment',
@@ -1124,6 +1264,7 @@ function App() {
     { label: 'Incidents', icon: '⚑' },
     { label: 'Cases', icon: '▤' },
     { label: 'Assets', icon: '▣' },
+    { label: 'Notifications', icon: '◔' },
     { label: 'Events', icon: '◫' },
     { label: 'Rules', icon: '◇' },
     { label: 'Threat Intel', icon: '✦' },
@@ -1237,6 +1378,57 @@ function App() {
               ))}
             </div>
           )}
+        </section>
+      );
+    }
+
+    if (activePage === 'Notifications') {
+      const filteredNotifications = notifications
+        .filter((notification) => notificationFilter === 'All' || notification.kind === notificationFilter)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      return (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Notification Center</div>
+              <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Recent Activity</h2>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <select value={notificationFilter} onChange={(event) => setNotificationFilter(event.target.value as NotificationFilter)} style={fieldStyle}>
+                <option value="All">All</option>
+                <option value="Incident">Incident</option>
+                <option value="Case">Case</option>
+                <option value="IOC">IOC</option>
+                <option value="Employee">Employee</option>
+              </select>
+              {unreadCount > 0 && (
+                <button type="button" onClick={markAllNotificationsRead} style={{ border: '1px solid rgba(96, 165, 250, 0.35)', background: 'rgba(59, 130, 246, 0.14)', color: '#dbeafe', borderRadius: '10px', padding: '0.55rem 0.8rem', cursor: 'pointer', fontWeight: 700 }}>
+                  Mark all read
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '0.8rem' }}>
+            {filteredNotifications.length === 0 ? (
+              <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '2rem', color: '#cbd5e1' }}>
+                No notifications match the current filter.
+              </div>
+            ) : filteredNotifications.map((notification) => (
+              <div key={notification.id} onClick={() => markNotificationRead(notification.id)} style={{ background: notification.read ? 'rgba(15, 23, 42, 0.35)' : 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '14px', padding: '0.9rem 1rem', display: 'grid', gap: '0.45rem', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    <span style={{ display: 'inline-flex', padding: '0.2rem 0.5rem', borderRadius: '999px', background: notification.kind === 'IOC' ? 'rgba(244, 63, 94, 0.12)' : notification.kind === 'Case' ? 'rgba(59, 130, 246, 0.12)' : notification.kind === 'Employee' ? 'rgba(34, 197, 94, 0.12)' : 'rgba(245, 158, 11, 0.12)', color: notification.kind === 'IOC' ? '#fca5a5' : notification.kind === 'Case' ? '#bfdbfe' : notification.kind === 'Employee' ? '#86efac' : '#fbbf24', fontWeight: 800, fontSize: '0.62rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>{notification.kind}</span>
+                    <strong style={{ color: '#f8fafc' }}>{notification.title}</strong>
+                  </div>
+                  {!notification.read && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#60a5fa', boxShadow: '0 0 12px rgba(96,165,250,0.65)' }} />} 
+                </div>
+                <div style={{ color: '#cbd5e1', lineHeight: 1.6 }}>{notification.message}</div>
+                <div style={{ color: '#94a3b8', fontSize: '0.72rem' }}>{new Date(notification.createdAt).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
         </section>
       );
     }
@@ -2234,6 +2426,36 @@ function App() {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative' }}>
+                  <button type="button" onClick={() => setNotificationsOpen((value) => !value)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '42px', height: '42px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.72)', color: '#e2e8f0', cursor: 'pointer', position: 'relative' }}>
+                    <span style={{ fontSize: '1.1rem' }}>🔔</span>
+                    {unreadCount > 0 && (
+                      <span style={{ position: 'absolute', top: '-5px', right: '-3px', minWidth: '18px', height: '18px', borderRadius: '999px', background: 'linear-gradient(135deg, #f97316, #ef4444)', color: '#fff', fontSize: '0.62rem', fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 0.25rem' }}>{unreadCount}</span>
+                    )}
+                  </button>
+                  {notificationsOpen && (
+                    <div style={{ position: 'absolute', top: 'calc(100% + 12px)', right: 0, width: '340px', background: 'rgba(15, 23, 42, 0.96)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '14px', boxShadow: '0 18px 32px rgba(2, 6, 23, 0.42)', padding: '0.7rem', zIndex: 60 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.55rem', color: '#cbd5e1' }}>
+                        <strong style={{ fontSize: '0.8rem' }}>Notifications</strong>
+                        {unreadCount > 0 && <button type="button" onClick={markAllNotificationsRead} style={{ background: 'transparent', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 700 }}>Mark all read</button>}
+                      </div>
+                      <div style={{ display: 'grid', gap: '0.5rem', maxHeight: '280px', overflowY: 'auto' }}>
+                        {notifications.length === 0 ? (
+                          <div style={{ color: '#cbd5e1', fontSize: '0.76rem', padding: '0.55rem 0' }}>No recent notifications.</div>
+                        ) : notifications.slice(0, 6).map((notification) => (
+                          <button key={notification.id} type="button" onClick={() => { markNotificationRead(notification.id); setNotificationsOpen(false); }} style={{ display: 'grid', gap: '0.15rem', width: '100%', textAlign: 'left', background: notification.read ? 'rgba(15, 23, 42, 0.7)' : 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '10px', padding: '0.6rem 0.7rem', color: '#e2e8f0', cursor: 'pointer' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.45rem' }}>
+                              <strong style={{ fontSize: '0.74rem' }}>{notification.title}</strong>
+                              {!notification.read && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#60a5fa', display: 'inline-block' }} />}
+                            </div>
+                            <span style={{ color: '#cbd5e1', fontSize: '0.7rem', lineHeight: 1.5 }}>{notification.message}</span>
+                            <span style={{ color: '#94a3b8', fontSize: '0.65rem' }}>{new Date(notification.createdAt).toLocaleString()}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div style={{ display: 'flex', padding: '0.2rem', gap: '0.2rem', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
                   <button type="button" style={{ border: '1px solid rgba(96, 165, 250, 0.35)', background: 'rgba(59, 130, 246, 0.18)', color: '#dbeafe', borderRadius: '8px', padding: '0.45rem 0.65rem', cursor: 'default', fontSize: '0.75rem', fontWeight: 700 }}>SOC Console</button>
                   <button type="button" onClick={() => setPortalMode('employee')} style={{ border: 'none', background: 'transparent', color: '#94a3b8', borderRadius: '8px', padding: '0.45rem 0.65rem', cursor: 'pointer', fontSize: '0.75rem' }}>Employee Portal</button>
@@ -2281,6 +2503,27 @@ function App() {
 
           {renderPageContent()}
         </main>
+
+        {toastNotifications.length > 0 && (
+          <div style={{ position: 'fixed', right: '1.25rem', bottom: '1.25rem', display: 'grid', gap: '0.7rem', zIndex: 80 }}>
+            <style>{`
+              @keyframes toastIn {
+                from { opacity: 0; transform: translateY(18px) scale(0.96); }
+                to { opacity: 1; transform: translateY(0) scale(1); }
+              }
+            `}</style>
+            {toastNotifications.map((toast) => (
+              <div key={toast.id} style={{ minWidth: '320px', maxWidth: '360px', background: 'rgba(15, 23, 42, 0.92)', border: '1px solid rgba(96, 165, 250, 0.3)', borderRadius: '14px', boxShadow: '0 22px 40px rgba(15, 23, 42, 0.38)', padding: '0.8rem 0.9rem', color: '#e2e8f0', animation: 'toastIn 0.22s ease', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+                  <strong style={{ fontSize: '0.76rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#93c5fd' }}>{toast.kind}</strong>
+                  <button type="button" onClick={() => setToastNotifications((current) => current.filter((item) => item.id !== toast.id))} style={{ background: 'transparent', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: '0.75rem' }}>×</button>
+                </div>
+                <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>{toast.title}</div>
+                <div style={{ color: '#cbd5e1', fontSize: '0.75rem', lineHeight: 1.5 }}>{toast.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {drawerIncident && (
           <aside style={{
@@ -2555,6 +2798,20 @@ function App() {
             </div>
 
             <div style={{ display: 'grid', gap: '1rem' }}>
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.55rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>SLA</div>
+                  <span style={{ color: selectedCaseSla?.color ?? '#22c55e', fontWeight: 800, fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>{selectedCaseSla?.label ?? 'Healthy'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.45rem' }}>
+                  <strong style={{ color: '#f8fafc' }}>{selectedCase.priority}</strong>
+                  <span style={{ color: selectedCaseSla?.color ?? '#22c55e', fontWeight: 800 }}>{selectedCaseSla?.remainingText ?? 'Healthy'}</span>
+                </div>
+                <div style={{ width: '100%', height: '10px', borderRadius: '999px', background: 'rgba(148,163,184,0.14)', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.max(0, Math.min(100, ((getSlaWindowMs(selectedCase.priority) - Math.max(0, selectedCaseSla?.remainingMs ?? 0)) / getSlaWindowMs(selectedCase.priority)) * 100))}%`, height: '100%', borderRadius: '999px', background: selectedCaseSla?.color ?? '#22c55e' }} />
+                </div>
+              </div>
+
               <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
                 <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Linked Incident</div>
                 <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedCase.incident.eventType} · {selectedCase.incident.id}</div>
