@@ -6,6 +6,7 @@ import IncidentPanel from './components/IncidentPanel';
 import EventTable from './components/EventTable';
 import SearchBar from './components/SearchBar';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
+import { getMitreMapping } from './utils/mitre';
 
 type PageName = 'Dashboard' | 'Incidents' | 'Events' | 'Threat Intel' | 'Analyst';
 type EventComposerState = {
@@ -31,9 +32,36 @@ type ScenarioTemplate = {
   description: string;
 };
 
+type WorkflowStatus = 'New' | 'Investigating' | 'Contained' | 'Resolved';
+type AnalystName = 'Tunar' | 'Sarah' | 'Michael' | 'Emma';
+
+type IncidentNote = {
+  id: string;
+  timestamp: string;
+  analyst: string;
+  content: string;
+};
+
+type TimelineEntry = {
+  id: string;
+  type: 'created' | 'status' | 'assignment' | 'note';
+  timestamp: string;
+  message: string;
+  analyst?: string;
+};
+
+type IncidentWorkflow = {
+  status: WorkflowStatus;
+  assignedAnalyst: AnalystName;
+  notes: IncidentNote[];
+  timeline: TimelineEntry[];
+};
+
 const sourceOptions = ['Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIEM Correlation', 'Identity Provider', 'CloudTrail', 'Web Proxy', 'Kubernetes', 'Email Gateway'];
 const eventTypeOptions = ['Failed Login', 'Malware Detection', 'Port Scan', 'Brute Force', 'Critical Alert', 'Privilege Escalation', 'Suspicious Process', 'Data Exfiltration', 'Lateral Movement', 'Shadow IT'];
 const severityOptions: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+const workflowStatuses: WorkflowStatus[] = ['New', 'Investigating', 'Contained', 'Resolved'];
+const demoAnalysts: AnalystName[] = ['Tunar', 'Sarah', 'Michael', 'Emma'];
 const ipv4Regex = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.|$)){4}$/;
 const commonSourceOptions = [...sourceOptions];
 
@@ -100,6 +128,36 @@ const buildHourlySeries = (logs: LogEntry[]) => {
   return { counts, points, max, path, areaPath };
 };
 
+const createDefaultWorkflow = (incidentId: string, incidentTimestamp: string): IncidentWorkflow => ({
+  status: 'New',
+  assignedAnalyst: 'Tunar',
+  notes: [],
+  timeline: [{
+    id: `${incidentId}-created`,
+    type: 'created',
+    timestamp: incidentTimestamp,
+    message: 'Incident created',
+    analyst: 'System'
+  }]
+});
+
+const escapeMarkdownHtml = (value: string) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+const renderMarkdownText = (value: string) => {
+  const html = escapeMarkdownHtml(value)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br />');
+
+  return <div dangerouslySetInnerHTML={{ __html: html }} />;
+};
+
 function App() {
   const [auth, setAuth] = useState<AuthResponse | null>(null);
   const [backendHealth, setBackendHealth] = useState<HealthStatus | null>(null);
@@ -117,6 +175,8 @@ function App() {
   const [chartHoverIndex, setChartHoverIndex] = useState<number | null>(null);
   const [templateCategory, setTemplateCategory] = useState<'All' | string>('All');
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const [incidentWorkflows, setIncidentWorkflows] = useState<Record<string, IncidentWorkflow>>({});
+  const [incidentNoteDraft, setIncidentNoteDraft] = useState('');
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
 
   const fetchHealth = async (token: string) => {
@@ -156,6 +216,23 @@ function App() {
     const matchesSeverity = severityFilter === 'ALL' || log.severity === severityFilter;
     return matchesSearch && matchesSeverity;
   });
+
+  const ensureIncidentWorkflow = (incidentId: string, timestamp: string) => {
+    setIncidentWorkflows((current) => {
+      if (current[incidentId]) return current;
+      return {
+        ...current,
+        [incidentId]: createDefaultWorkflow(incidentId, timestamp)
+      };
+    });
+  };
+
+  const updateIncidentWorkflow = (incidentId: string, updater: (workflow: IncidentWorkflow) => IncidentWorkflow) => {
+    setIncidentWorkflows((current) => ({
+      ...current,
+      [incidentId]: updater(current[incidentId] ?? createDefaultWorkflow(incidentId, new Date().toISOString()))
+    }));
+  };
 
   const incidentLogs = logs.filter((log) => log.severity === 'CRITICAL');
   const filteredLogs = filterLogs(logs);
@@ -250,6 +327,10 @@ function App() {
 
   const handleIncidentSelect = (incidentId: string) => {
     setSelectedIncidentId(incidentId);
+    const incident = [...logs].find((log) => log.id === incidentId) ?? filteredCriticalLogs.find((log) => log.id === incidentId);
+    if (incident) {
+      ensureIncidentWorkflow(incidentId, incident.timestamp);
+    }
     const row = document.getElementById(`log-row-${incidentId}`);
     if (row) {
       row.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -260,6 +341,80 @@ function App() {
         row.style.boxShadow = 'none';
       }, 1800);
     }
+  };
+
+  const selectedIncident = logs.find((log) => log.id === selectedIncidentId) ?? null;
+  const selectedWorkflow = selectedIncident ? incidentWorkflows[selectedIncident.id] ?? createDefaultWorkflow(selectedIncident.id, selectedIncident.timestamp) : null;
+
+  const addIncidentNote = () => {
+    if (!selectedIncident || !selectedWorkflow) return;
+    const note = incidentNoteDraft.trim();
+    if (!note) return;
+
+    const analystName = selectedWorkflow.assignedAnalyst;
+    const timestamp = new Date().toISOString();
+
+    const nextNote: IncidentNote = {
+      id: `${selectedIncident.id}-note-${Date.now()}`,
+      timestamp,
+      analyst: analystName,
+      content: note
+    };
+
+    updateIncidentWorkflow(selectedIncident.id, (workflow) => {
+      const nextTimelineEntry: TimelineEntry = {
+        id: `${selectedIncident.id}-note-${Date.now()}`,
+        type: 'note',
+        timestamp,
+        message: `Note added by ${analystName}`,
+        analyst: analystName
+      };
+
+      return {
+        ...workflow,
+        notes: [...workflow.notes, nextNote].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+        timeline: [...workflow.timeline, nextTimelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      };
+    });
+    setIncidentNoteDraft('');
+  };
+
+  const updateWorkflowStatus = (status: WorkflowStatus) => {
+    if (!selectedIncident) return;
+    updateIncidentWorkflow(selectedIncident.id, (workflow) => {
+      const nextTimelineEntry: TimelineEntry = {
+        id: `${selectedIncident.id}-status-${Date.now()}`,
+        type: 'status',
+        timestamp: new Date().toISOString(),
+        message: `Status changed to ${status}`,
+        analyst: workflow.assignedAnalyst
+      };
+
+      return {
+        ...workflow,
+        status,
+        timeline: [...workflow.timeline, nextTimelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      };
+    });
+  };
+
+  const updateAssignedAnalyst = (analyst: AnalystName) => {
+    if (!selectedIncident) return;
+    updateIncidentWorkflow(selectedIncident.id, (workflow) => {
+      const nextTimelineEntry: TimelineEntry = {
+        id: `${selectedIncident.id}-assignment-${Date.now()}`,
+        type: 'assignment',
+        timestamp: new Date().toISOString(),
+        message: `Assigned to ${analyst}`,
+        analyst
+      };
+
+      return {
+        ...workflow,
+        assignedAnalyst: analyst,
+        timeline: [...workflow.timeline, nextTimelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      };
+    });
   };
 
   const handleComposerChange = (field: keyof EventComposerState, value: string) => {
@@ -1056,6 +1211,11 @@ function App() {
     boxSizing: 'border-box'
   };
 
+  const drawerIncident = selectedIncident && selectedWorkflow ? {
+    incident: selectedIncident,
+    workflow: selectedWorkflow
+  } : null;
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -1217,6 +1377,210 @@ function App() {
 
           {renderPageContent()}
         </main>
+
+        {drawerIncident && (
+          <aside style={{
+            position: 'fixed',
+            top: '1.25rem',
+            right: '1.25rem',
+            width: 'min(420px, calc(100vw - 2rem))',
+            height: 'calc(100vh - 2.5rem)',
+            background: 'rgba(15, 23, 42, 0.82)',
+            border: '1px solid rgba(148, 163, 184, 0.22)',
+            borderRadius: '22px',
+            boxShadow: '0 35px 60px rgba(8, 15, 31, 0.5)',
+            backdropFilter: 'blur(18px)',
+            WebkitBackdropFilter: 'blur(18px)',
+            zIndex: 40,
+            padding: '1.1rem',
+            overflowY: 'auto',
+            animation: 'drawerSlideIn 0.25s ease',
+            transform: 'translateX(0)'
+          }}>
+            <style>{`
+              @keyframes drawerSlideIn {
+                from { opacity: 0; transform: translateX(30px); }
+                to { opacity: 1; transform: translateX(0); }
+              }
+            `}</style>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Incident Detail</div>
+                <h3 style={{ margin: '0.3rem 0 0', fontSize: '1.2rem' }}>{drawerIncident.incident.id}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedIncidentId(null)}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
+                  background: 'rgba(15, 23, 42, 0.7)',
+                  color: '#e2e8f0',
+                  cursor: 'pointer'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Event Type</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.eventType}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Source</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.source}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Severity</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{drawerIncident.incident.severity}</div>
+                </div>
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.32rem' }}>Timestamp</div>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{new Date(drawerIncident.incident.timestamp).toLocaleString()}</div>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>MITRE Mapping</div>
+                <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '0.2rem', padding: '0.45rem 0.7rem', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.8)', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
+                  <span style={{ display: 'inline-block', padding: '0.2rem 0.5rem', borderRadius: '9999px', background: getMitreMapping(drawerIncident.incident.eventType).color, color: '#f8fafc', fontWeight: 700, fontSize: '0.72rem', letterSpacing: '0.04em', width: 'fit-content' }}>
+                    {getMitreMapping(drawerIncident.incident.eventType).id}
+                  </span>
+                  <span style={{ color: '#cbd5e1', fontSize: '0.7rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                    {getMitreMapping(drawerIncident.incident.eventType).tactic}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Description</div>
+                <div style={{ color: '#e2e8f0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{drawerIncident.incident.message}</div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Workflow</div>
+                  <select
+                    value={drawerIncident.workflow.status}
+                    onChange={(event) => updateWorkflowStatus(event.target.value as WorkflowStatus)}
+                    style={{
+                      border: '1px solid rgba(148, 163, 184, 0.2)',
+                      background: '#0f172a',
+                      color: '#e2e8f0',
+                      borderRadius: '10px',
+                      padding: '0.45rem 0.7rem'
+                    }}
+                  >
+                    {workflowStatuses.map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: 'grid', gap: '0.7rem' }}>
+                  <div>
+                    <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Assigned Analyst</div>
+                    <select
+                      value={drawerIncident.workflow.assignedAnalyst}
+                      onChange={(event) => updateAssignedAnalyst(event.target.value as AnalystName)}
+                      style={{
+                        width: '100%',
+                        border: '1px solid rgba(148, 163, 184, 0.2)',
+                        background: '#0f172a',
+                        color: '#e2e8f0',
+                        borderRadius: '10px',
+                        padding: '0.6rem 0.7rem'
+                      }}
+                    >
+                      {demoAnalysts.map((analyst) => (
+                        <option key={analyst} value={analyst}>{analyst}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Investigation Notes</div>
+                    <textarea
+                      value={incidentNoteDraft}
+                      onChange={(event) => setIncidentNoteDraft(event.target.value)}
+                      placeholder="Add markdown notes..."
+                      style={{
+                        width: '100%',
+                        minHeight: '90px',
+                        resize: 'vertical',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(148, 163, 184, 0.2)',
+                        background: 'rgba(15, 23, 42, 0.75)',
+                        color: '#e2e8f0',
+                        padding: '0.7rem 0.8rem',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={addIncidentNote}
+                      style={{
+                        marginTop: '0.6rem',
+                        width: '100%',
+                        background: 'linear-gradient(135deg, #2563eb, #0ea5e9)',
+                        border: 'none',
+                        color: '#eff6ff',
+                        borderRadius: '12px',
+                        padding: '0.7rem 1rem',
+                        cursor: 'pointer',
+                        fontWeight: 700
+                      }}
+                    >
+                      Add Note
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Timeline</div>
+                <div style={{ display: 'grid', gap: '0.8rem', position: 'relative', paddingLeft: '0.85rem' }}>
+                  <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '2px', background: 'rgba(96, 165, 250, 0.34)' }} />
+                  {drawerIncident.workflow.timeline.map((entry) => (
+                    <div key={entry.id} style={{ display: 'flex', gap: '0.75rem', position: 'relative' }}>
+                      <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#60a5fa', border: '2px solid rgba(15,23,42,0.9)', marginTop: '0.3rem', position: 'relative', zIndex: 1 }} />
+                      <div style={{ flex: 1, background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '10px', padding: '0.55rem 0.65rem' }}>
+                        <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: '0.82rem', marginBottom: '0.2rem' }}>{entry.message}</div>
+                        <div style={{ color: '#cbd5e1', fontSize: '0.68rem' }}>{new Date(entry.timestamp).toLocaleString()} {entry.analyst ? `• ${entry.analyst}` : ''}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {drawerIncident.workflow.notes.length > 0 && (
+                <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Notes</div>
+                  <div style={{ display: 'grid', gap: '0.7rem' }}>
+                    {drawerIncident.workflow.notes
+                      .slice()
+                      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                      .map((note) => (
+                        <div key={note.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '10px', padding: '0.65rem 0.7rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.35rem', color: '#cbd5e1', fontSize: '0.68rem' }}>
+                            <span>{note.analyst}</span>
+                            <span>{new Date(note.timestamp).toLocaleString()}</span>
+                          </div>
+                          <div style={{ color: '#e2e8f0', lineHeight: 1.6 }}>{renderMarkdownText(note.content)}</div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );
