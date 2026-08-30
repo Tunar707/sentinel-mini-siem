@@ -3,9 +3,12 @@ import type { IOC, IOCType } from '../types/ioc';
 
 type IOCForm = Omit<IOC, 'id' | 'createdAt'>;
 
+type ToastKind = 'Incident' | 'Case' | 'IOC' | 'Employee' | 'System';
+
 type ThreatIntelPageProps = {
   iocs: IOC[];
   onIOCsChange: (iocs: IOC[]) => void;
+  onToast?: (kind: ToastKind, title: string, message: string, onUndo: () => void) => void;
 };
 
 const iocTypes: IOCType[] = ['IP', 'Domain', 'Hash', 'Email'];
@@ -54,7 +57,7 @@ const inputStyle: CSSProperties = {
   outline: 'none'
 };
 
-function ThreatIntelPage({ iocs, onIOCsChange }: ThreatIntelPageProps) {
+function ThreatIntelPage({ iocs, onIOCsChange, onToast }: ThreatIntelPageProps) {
   const [form, setForm] = useState<IOCForm>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
@@ -96,8 +99,15 @@ function ThreatIntelPage({ iocs, onIOCsChange }: ThreatIntelPageProps) {
   };
 
   const deleteIOC = (iocId: string) => {
-    if (!window.confirm('Delete this IOC?')) return;
-    onIOCsChange(iocs.filter((ioc) => ioc.id !== iocId));
+    const target = iocs.find((ioc) => ioc.id === iocId);
+    if (!target) return;
+    const previousIOCs = iocs;
+    if (onToast) {
+      onIOCsChange(iocs.filter((ioc) => ioc.id !== iocId));
+      onToast('System', 'IOC deleted', `${target.value} was removed from threat intelligence.`, () => onIOCsChange(previousIOCs));
+    } else if (window.confirm('Delete this IOC?')) {
+      onIOCsChange(iocs.filter((ioc) => ioc.id !== iocId));
+    }
     if (editingId === iocId) {
       setEditingId(null);
       setForm(emptyForm);

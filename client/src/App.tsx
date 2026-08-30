@@ -9,6 +9,10 @@ import RulesPage, { defaultRules } from './components/RulesPage';
 import ThreatIntelPage, { defaultIocs } from './components/ThreatIntelPage';
 import ReportsPage from './components/ReportsPage';
 import EmployeePortal, { type EmployeeTicket, type TicketStatus } from './components/EmployeePortal';
+import AppModal from './components/AppModal';
+import ConfirmDialog from './components/ConfirmDialog';
+import EmptyState from './components/EmptyState';
+import { AssetSkeleton, UserSkeleton, CaseSkeleton, ReportSkeleton } from './components/SkeletonLoaders';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
 import type { DetectionRule } from './types/rule';
 import type { IOC } from './types/ioc';
@@ -98,6 +102,8 @@ type NotificationRecord = {
   createdAt: string;
   read: boolean;
   relatedId?: string;
+  actionLabel?: string;
+  onUndo?: () => void;
 };
 
 type AssetStatus = 'Active' | 'Monitoring' | 'Isolated' | 'Offline';
@@ -326,6 +332,17 @@ function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{ kind: 'asset' | 'user' | 'event' | 'rule' | 'ioc'; id: string; label: string; action: () => void } | null>(null);
+  const [assetModalOpen, setAssetModalOpen] = useState(false);
+  const [assetEditorId, setAssetEditorId] = useState<string | null>(null);
+  const [assetForm, setAssetForm] = useState<{ hostname: string; ip: string; type: AssetType; owner: string; department: string; status: AssetStatus; criticality: AssetCriticality; riskScore: number }>({
+    hostname: '', ip: '10.0.0.1', type: 'Workstation', owner: '', department: 'Operations', status: 'Monitoring', criticality: 'Medium', riskScore: 50
+  });
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [userEditorId, setUserEditorId] = useState<string | null>(null);
+  const [userForm, setUserForm] = useState<{ name: string; email: string; department: string; role: string; devices: string; status: UserStatus; riskScore: number }>({
+    name: '', email: '', department: 'Operations', role: 'Analyst', devices: '', status: 'Active', riskScore: 25
+  });
   const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('ALL');
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
@@ -709,6 +726,24 @@ function App() {
     setNotifications((current) => current.map((item) => ({ ...item, read: true })));
   };
 
+  const showUndoToast = (kind: NotificationKind, title: string, message: string, onUndo: () => void) => {
+    const toast: NotificationRecord = {
+      id: `undo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      kind,
+      title,
+      message,
+      createdAt: new Date().toISOString(),
+      read: true,
+      actionLabel: 'Undo',
+      onUndo
+    };
+
+    setToastNotifications((current) => [toast, ...current].slice(0, 3));
+    window.setTimeout(() => {
+      setToastNotifications((current) => current.filter((item) => item.id !== toast.id));
+    }, 5000);
+  };
+
   const unreadNotifications = notifications.filter((item) => !item.read);
   const unreadCount = unreadNotifications.length;
 
@@ -780,6 +815,131 @@ function App() {
     outline: 'none',
     fontSize: '0.9rem',
     boxSizing: 'border-box'
+  };
+
+  const resetAssetForm = () => {
+    setAssetEditorId(null);
+    setAssetForm({ hostname: '', ip: '10.0.0.1', type: 'Workstation', owner: '', department: 'Operations', status: 'Monitoring', criticality: 'Medium', riskScore: 50 });
+  };
+
+  const openAssetEditor = (asset?: AssetRecord) => {
+    if (!asset) {
+      resetAssetForm();
+      setAssetModalOpen(true);
+      return;
+    }
+    setAssetEditorId(asset.id);
+    setAssetForm({
+      hostname: asset.hostname,
+      ip: asset.ip,
+      type: asset.type,
+      owner: asset.owner,
+      department: asset.department,
+      status: asset.status,
+      criticality: asset.criticality,
+      riskScore: asset.riskScore
+    });
+    setAssetModalOpen(true);
+  };
+
+  const submitAssetForm = () => {
+    const hostname = assetForm.hostname.trim();
+    const owner = assetForm.owner.trim();
+    if (!hostname || !owner || !assetForm.ip.trim()) return;
+
+    if (assetEditorId) {
+      setAssets((current) => current.map((asset) => asset.id === assetEditorId ? { ...asset, ...assetForm, hostname, owner, ip: assetForm.ip.trim(), notes: asset.notes } : asset));
+    } else {
+      const created: AssetRecord = {
+        id: `asset-${Date.now()}`,
+        hostname,
+        ip: assetForm.ip.trim(),
+        type: assetForm.type,
+        owner,
+        department: assetForm.department,
+        status: assetForm.status,
+        criticality: assetForm.criticality,
+        riskScore: assetForm.riskScore,
+        lastSeen: new Date().toISOString(),
+        notes: []
+      };
+      setAssets((current) => [created, ...current]);
+    }
+
+    setAssetModalOpen(false);
+    resetAssetForm();
+  };
+
+  const deleteAssetRecord = (assetId: string) => {
+    const asset = assets.find((item) => item.id === assetId);
+    if (!asset) return;
+    const previous = assets;
+    setAssets((current) => current.filter((item) => item.id !== assetId));
+    showUndoToast('System', 'Asset deleted', `${asset.hostname} was removed from inventory.`, () => setAssets(previous));
+  };
+
+  const resetUserForm = () => {
+    setUserEditorId(null);
+    setUserForm({ name: '', email: '', department: 'Operations', role: 'Analyst', devices: '', status: 'Active', riskScore: 25 });
+  };
+
+  const openUserEditor = (user?: UserRecord) => {
+    if (!user) {
+      resetUserForm();
+      setUserModalOpen(true);
+      return;
+    }
+    setUserEditorId(user.id);
+    setUserForm({
+      name: user.name,
+      email: user.email,
+      department: user.department,
+      role: user.role,
+      devices: user.devices.join(', '),
+      status: user.status,
+      riskScore: user.riskScore
+    });
+    setUserModalOpen(true);
+  };
+
+  const submitUserForm = () => {
+    const name = userForm.name.trim();
+    const email = userForm.email.trim();
+    if (!name || !email) return;
+
+    const nextUserList = userEditorId ? users.map((user) => user.id === userEditorId ? {
+      ...user,
+      name,
+      email,
+      department: userForm.department,
+      role: userForm.role,
+      devices: userForm.devices.split(',').map((value) => value.trim()).filter(Boolean),
+      status: userForm.status,
+      riskScore: userForm.riskScore
+    } : user) : [{
+      id: `usr-${Date.now()}`,
+      name,
+      email,
+      department: userForm.department,
+      role: userForm.role,
+      devices: userForm.devices.split(',').map((value) => value.trim()).filter(Boolean),
+      status: userForm.status,
+      riskScore: userForm.riskScore,
+      lastLogin: new Date().toISOString(),
+      notes: []
+    }, ...users];
+
+    setUsers(nextUserList);
+    setUserModalOpen(false);
+    resetUserForm();
+  };
+
+  const deleteUserRecord = (userId: string) => {
+    const user = users.find((item) => item.id === userId);
+    if (!user) return;
+    const previous = users;
+    setUsers((current) => current.filter((item) => item.id !== userId));
+    showUndoToast('System', 'User removed', `${user.name} was removed from the directory.`, () => setUsers(previous));
   };
 
   const selectedWorkflow = selectedIncidentDetail
@@ -1623,7 +1783,10 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
               <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>User Directory</div>
               <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Employees & Accounts</h2>
             </div>
-            <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{filteredUsers.length} users</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{filteredUsers.length} users</div>
+              <button type="button" onClick={() => openUserEditor()} style={{ border: '1px solid rgba(96, 165, 250, 0.55)', borderRadius: '10px', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', color: '#eff6ff', padding: '0.65rem 0.9rem', cursor: 'pointer', fontWeight: 700 }}>Add User</button>
+            </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
@@ -1643,10 +1806,10 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
             </select>
           </div>
 
-          {filteredUsers.length === 0 ? (
-            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '2rem', color: '#cbd5e1' }}>
-              No users match the current filters.
-            </div>
+          {users.length === 0 ? (
+            <UserSkeleton />
+          ) : filteredUsers.length === 0 ? (
+            <EmptyState icon="👥" title="No users found" description="No user records match the current filters. Add a user to populate the directory." actionLabel="Add User" onAction={() => openUserEditor()} />
           ) : (
             <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '0.25rem' }}>
               <div style={{ overflowX: 'auto' }}>
@@ -1660,15 +1823,16 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
                   </thead>
                   <tbody>
                     {filteredUsers.map((user) => (
-                      <tr key={user.id} onClick={() => setSelectedUserId(user.id)} style={{ cursor: 'pointer', borderBottom: '1px solid rgba(148, 163, 184, 0.1)', background: selectedUserId === user.id ? 'rgba(59, 130, 246, 0.08)' : 'transparent' }}>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#f8fafc', fontWeight: 700 }}>{user.name}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.email}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.department}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.role}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{user.devices.join(', ')}</td>
-                        <td style={{ padding: '0.85rem 0.75rem' }}><span style={{ color: user.status === 'Offboarded' ? '#94a3b8' : user.status === 'Restricted' ? '#fca5a5' : user.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{user.status}</span></td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: user.riskScore >= 70 ? '#fca5a5' : user.riskScore >= 45 ? '#fbbf24' : '#86efac', fontWeight: 800 }}>{user.riskScore}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{new Date(user.lastLogin).toLocaleString()}</td>
+                      <tr key={user.id} style={{ borderBottom: '1px solid rgba(148, 163, 184, 0.1)', background: selectedUserId === user.id ? 'rgba(59, 130, 246, 0.08)' : 'transparent' }}>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: '#f8fafc', fontWeight: 700, cursor: 'pointer' }}>{user.name}</td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{user.email}</td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{user.department}</td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{user.role}</td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{user.devices.join(', ')}</td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', cursor: 'pointer' }}><span style={{ color: user.status === 'Offboarded' ? '#94a3b8' : user.status === 'Restricted' ? '#fca5a5' : user.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{user.status}</span></td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: user.riskScore >= 70 ? '#fca5a5' : user.riskScore >= 45 ? '#fbbf24' : '#86efac', fontWeight: 800, cursor: 'pointer' }}>{user.riskScore}</td>
+                        <td onClick={() => setSelectedUserId(user.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap', cursor: 'pointer' }}>{new Date(user.lastLogin).toLocaleString()}</td>
+                        <td style={{ padding: '0.35rem 0.5rem' }}><div style={{ display: 'flex', gap: '0.35rem' }}><button type="button" aria-label="Edit user" onClick={() => openUserEditor(user)} style={{ width: '28px', height: '28px', borderRadius: '8px', border: '1px solid rgba(96, 165, 250, 0.3)', background: 'rgba(59,130,246,0.12)', color: '#bfdbfe', cursor: 'pointer' }}>✎</button><button type="button" aria-label="Delete user" onClick={() => setConfirmDeleteTarget({ kind: 'user', id: user.id, label: user.name, action: () => deleteUserRecord(user.id) })} style={{ width: '28px', height: '28px', borderRadius: '8px', border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: 'pointer' }}>🗑</button></div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1829,7 +1993,10 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
               <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Asset Inventory</div>
               <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Tracked Systems</h2>
             </div>
-            <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{filteredAssets.length} assets</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{filteredAssets.length} assets</div>
+              <button type="button" onClick={() => openAssetEditor()} style={{ border: '1px solid rgba(96, 165, 250, 0.55)', borderRadius: '10px', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', color: '#eff6ff', padding: '0.65rem 0.9rem', cursor: 'pointer', fontWeight: 700 }}>Add Asset</button>
+            </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.75rem' }}>
@@ -1852,10 +2019,10 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
             </select>
           </div>
 
-          {filteredAssets.length === 0 ? (
-            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '2rem', color: '#cbd5e1' }}>
-              No assets match the current filters.
-            </div>
+          {assets.length === 0 ? (
+            <AssetSkeleton />
+          ) : filteredAssets.length === 0 ? (
+            <EmptyState icon="🛰️" title="No assets found" description="No assets match the current filters. Create a new asset to track inventory coverage." actionLabel="Add Asset" onAction={() => openAssetEditor()} />
           ) : (
             <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '0.25rem' }}>
               <div style={{ overflowX: 'auto' }}>
@@ -1869,16 +2036,17 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
                   </thead>
                   <tbody>
                     {filteredAssets.map((asset) => (
-                      <tr key={asset.id} onClick={() => setSelectedAssetId(asset.id)} style={{ cursor: 'pointer', borderBottom: '1px solid rgba(148, 163, 184, 0.1)', background: selectedAssetId === asset.id ? 'rgba(59, 130, 246, 0.08)' : 'transparent' }}>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#f8fafc', fontWeight: 700 }}>{asset.hostname}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.ip}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.type}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.owner}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1' }}>{asset.department}</td>
-                        <td style={{ padding: '0.85rem 0.75rem' }}><span style={{ color: asset.status === 'Isolated' ? '#fca5a5' : asset.status === 'Offline' ? '#94a3b8' : asset.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{asset.status}</span></td>
-                        <td style={{ padding: '0.85rem 0.75rem' }}><span style={{ color: asset.criticality === 'Critical' ? '#fca5a5' : asset.criticality === 'High' ? '#fbbf24' : asset.criticality === 'Medium' ? '#93c5fd' : '#86efac', fontWeight: 700 }}>{asset.criticality}</span></td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: asset.riskScore >= 80 ? '#fca5a5' : asset.riskScore >= 60 ? '#fbbf24' : '#86efac', fontWeight: 800 }}>{asset.riskScore}</td>
-                        <td style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{new Date(asset.lastSeen).toLocaleString()}</td>
+                      <tr key={asset.id} style={{ borderBottom: '1px solid rgba(148, 163, 184, 0.1)', background: selectedAssetId === asset.id ? 'rgba(59, 130, 246, 0.08)' : 'transparent' }}>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: '#f8fafc', fontWeight: 700, cursor: 'pointer' }}>{asset.hostname}</td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{asset.ip}</td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{asset.type}</td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{asset.owner}</td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>{asset.department}</td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', cursor: 'pointer' }}><span style={{ color: asset.status === 'Isolated' ? '#fca5a5' : asset.status === 'Offline' ? '#94a3b8' : asset.status === 'Monitoring' ? '#fbbf24' : '#86efac', fontWeight: 700 }}>{asset.status}</span></td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', cursor: 'pointer' }}><span style={{ color: asset.criticality === 'Critical' ? '#fca5a5' : asset.criticality === 'High' ? '#fbbf24' : asset.criticality === 'Medium' ? '#93c5fd' : '#86efac', fontWeight: 700 }}>{asset.criticality}</span></td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: asset.riskScore >= 80 ? '#fca5a5' : asset.riskScore >= 60 ? '#fbbf24' : '#86efac', fontWeight: 800, cursor: 'pointer' }}>{asset.riskScore}</td>
+                        <td onClick={() => setSelectedAssetId(asset.id)} style={{ padding: '0.85rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap', cursor: 'pointer' }}>{new Date(asset.lastSeen).toLocaleString()}</td>
+                        <td style={{ padding: '0.35rem 0.5rem' }}><div style={{ display: 'flex', gap: '0.35rem' }}><button type="button" aria-label="Edit asset" onClick={() => openAssetEditor(asset)} style={{ width: '28px', height: '28px', borderRadius: '8px', border: '1px solid rgba(96, 165, 250, 0.3)', background: 'rgba(59,130,246,0.12)', color: '#bfdbfe', cursor: 'pointer' }}>✎</button><button type="button" aria-label="Delete asset" onClick={() => setConfirmDeleteTarget({ kind: 'asset', id: asset.id, label: asset.hostname, action: () => deleteAssetRecord(asset.id) })} style={{ width: '28px', height: '28px', borderRadius: '8px', border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: 'pointer' }}>🗑</button></div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -2026,9 +2194,9 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
           {error && <p style={{ color: '#fca5a5', marginBottom: '1rem' }}>Error: {error}</p>}
 
           {logsLoading ? (
-            <p style={{ color: '#cbd5e1' }}>Loading events...</p>
+            <CaseSkeleton />
           ) : filteredLogs.length === 0 ? (
-            <p style={{ color: '#cbd5e1' }}>No events match the current filters.</p>
+            <EmptyState icon="🧭" title="No events found" description="No events match the current filters. Use the event composer to create a fresh record." actionLabel="Submit Event" onAction={() => setActivePage('Dashboard')} />
           ) : (
             <EventTable logs={filteredLogs} selectedIncidentId={selectedIncidentId} />
           )}
@@ -2048,14 +2216,17 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
           </section>
         );
       }
-      return <RulesPage rules={rules} onRulesChange={setRules} />;
+      return <RulesPage rules={rules} onRulesChange={setRules} onToast={showUndoToast} />;
     }
 
     if (activePage === 'Threat Intel') {
-      return <ThreatIntelPage iocs={iocs} onIOCsChange={setIOCs} />;
+      return <ThreatIntelPage iocs={iocs} onIOCsChange={setIOCs} onToast={showUndoToast} />;
     }
 
     if (activePage === 'Reports') {
+      if (logs.length === 0 && incidentLogs.length === 0 && cases.length === 0) {
+        return <ReportSkeleton />;
+      }
       return (
         <ReportsPage
           logs={logs}
@@ -2900,10 +3071,53 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
                 </div>
                 <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>{toast.title}</div>
                 <div style={{ color: '#cbd5e1', fontSize: '0.75rem', lineHeight: 1.5 }}>{toast.message}</div>
+                {toast.actionLabel && toast.onUndo && (
+                  <button type="button" onClick={() => {
+                    if (toast.onUndo) {
+                      toast.onUndo();
+                    }
+                    setToastNotifications((current) => current.filter((item) => item.id !== toast.id));
+                  }} style={{ marginTop: '0.65rem', border: '1px solid rgba(96,165,250,0.35)', background: 'rgba(59,130,246,0.12)', color: '#dbeafe', borderRadius: '8px', padding: '0.45rem 0.7rem', cursor: 'pointer', fontWeight: 700 }}>{toast.actionLabel}</button>
+                )}
               </div>
             ))}
           </div>
         )}
+
+        {confirmDeleteTarget && (
+          <ConfirmDialog
+            open={Boolean(confirmDeleteTarget)}
+            title="Delete record"
+            message={`This will permanently remove ${confirmDeleteTarget.label}. This action can be undone for 5 seconds from the toast notification.`}
+            onConfirm={() => { confirmDeleteTarget.action(); setConfirmDeleteTarget(null); }}
+            onCancel={() => setConfirmDeleteTarget(null)}
+          />
+        )}
+
+        <AppModal open={assetModalOpen} title={assetEditorId ? 'Edit asset' : 'Create asset'} description="Track the asset inventory record and operational context." submitLabel={assetEditorId ? 'Save asset' : 'Create asset'} onClose={() => { setAssetModalOpen(false); resetAssetForm(); }} onSubmit={submitAssetForm}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.8rem' }}>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Hostname<input value={assetForm.hostname} onChange={(event) => setAssetForm((current) => ({ ...current, hostname: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>IP Address<input value={assetForm.ip} onChange={(event) => setAssetForm((current) => ({ ...current, ip: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Type<select value={assetForm.type} onChange={(event) => setAssetForm((current) => ({ ...current, type: event.target.value as AssetType }))} style={{ ...fieldStyle, marginTop: '0.35rem' }}>{assetTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Owner<input value={assetForm.owner} onChange={(event) => setAssetForm((current) => ({ ...current, owner: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Department<input value={assetForm.department} onChange={(event) => setAssetForm((current) => ({ ...current, department: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Status<select value={assetForm.status} onChange={(event) => setAssetForm((current) => ({ ...current, status: event.target.value as AssetStatus }))} style={{ ...fieldStyle, marginTop: '0.35rem' }}>{assetStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Criticality<select value={assetForm.criticality} onChange={(event) => setAssetForm((current) => ({ ...current, criticality: event.target.value as AssetCriticality }))} style={{ ...fieldStyle, marginTop: '0.35rem' }}>{assetCriticalities.map((level) => <option key={level} value={level}>{level}</option>)}</select></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Risk Score<input type="number" min="0" max="100" value={assetForm.riskScore} onChange={(event) => setAssetForm((current) => ({ ...current, riskScore: Number(event.target.value) }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+          </div>
+        </AppModal>
+
+        <AppModal open={userModalOpen} title={userEditorId ? 'Edit user' : 'Create user'} description="Add or update a user profile for the enterprise directory." submitLabel={userEditorId ? 'Save user' : 'Create user'} onClose={() => { setUserModalOpen(false); resetUserForm(); }} onSubmit={submitUserForm}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.8rem' }}>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Name<input value={userForm.name} onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Email<input value={userForm.email} onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Department<input value={userForm.department} onChange={(event) => setUserForm((current) => ({ ...current, department: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Role<input value={userForm.role} onChange={(event) => setUserForm((current) => ({ ...current, role: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Devices<input value={userForm.devices} onChange={(event) => setUserForm((current) => ({ ...current, devices: event.target.value }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Status<select value={userForm.status} onChange={(event) => setUserForm((current) => ({ ...current, status: event.target.value as UserStatus }))} style={{ ...fieldStyle, marginTop: '0.35rem' }}>{['Active', 'Monitoring', 'Restricted', 'Offboarded'].map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
+            <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Risk Score<input type="number" min="0" max="100" value={userForm.riskScore} onChange={(event) => setUserForm((current) => ({ ...current, riskScore: Number(event.target.value) }))} style={{ ...fieldStyle, marginTop: '0.35rem' }} /></label>
+          </div>
+        </AppModal>
 
         {drawerIncident && (
           <aside style={{

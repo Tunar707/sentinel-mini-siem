@@ -27,9 +27,12 @@ const emptyForm: RuleForm = {
   enabled: true
 };
 
+type ToastKind = 'Incident' | 'Case' | 'IOC' | 'Employee' | 'System';
+
 type RulesPageProps = {
   rules: DetectionRule[];
   onRulesChange: (rules: DetectionRule[]) => void;
+  onToast?: (kind: ToastKind, title: string, message: string, onUndo: () => void) => void;
 };
 
 const panelStyle: CSSProperties = {
@@ -52,7 +55,7 @@ const inputStyle: CSSProperties = {
   outline: 'none'
 };
 
-function RulesPage({ rules, onRulesChange }: RulesPageProps) {
+function RulesPage({ rules, onRulesChange, onToast }: RulesPageProps) {
   const [form, setForm] = useState<RuleForm>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
@@ -104,8 +107,15 @@ function RulesPage({ rules, onRulesChange }: RulesPageProps) {
   };
 
   const deleteRule = (ruleId: string) => {
-    if (!window.confirm('Delete this detection rule?')) return;
-    onRulesChange(rules.filter((rule) => rule.id !== ruleId));
+    const target = rules.find((rule) => rule.id === ruleId);
+    if (!target) return;
+    const previousRules = rules;
+    if (onToast) {
+      onRulesChange(rules.filter((rule) => rule.id !== ruleId));
+      onToast('System', 'Rule deleted', `${target.name} was removed from the detection catalog.`, () => onRulesChange(previousRules));
+    } else if (window.confirm('Delete this detection rule?')) {
+      onRulesChange(rules.filter((rule) => rule.id !== ruleId));
+    }
     if (editingId === ruleId) {
       setEditingId(null);
       setForm(emptyForm);
