@@ -1,31 +1,19 @@
-import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import { useState, type CSSProperties, type FormEvent } from 'react';
 import { getMitreMapping } from '../utils/mitre';
 import type { Severity } from '../types/log';
+import type { DetectionRule } from '../types/rule';
 
-type DetectionRule = {
-  id: string;
-  name: string;
-  source: string;
-  eventType: string;
-  severity: Severity;
-  mitreTechnique: string;
-  thresholdCount: number;
-  timeWindowMinutes: number;
-  enabled: boolean;
-  createdAt: string;
-};
-
-type RuleForm = Omit<DetectionRule, 'id' | 'createdAt'>;
+type RuleForm = Omit<DetectionRule, 'id' | 'createdAt' | 'hitCount' | 'lastTriggered'>;
 
 const sourceOptions = ['Any Source', 'Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIEM Correlation', 'Identity Provider', 'CloudTrail', 'Web Proxy', 'Kubernetes', 'Email Gateway'];
 const eventTypeOptions = ['Failed Login', 'Malware Detection', 'Port Scan', 'Brute Force', 'Critical Alert', 'Privilege Escalation', 'Suspicious Process', 'Data Exfiltration', 'Lateral Movement', 'Shadow IT'];
 const severityOptions: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 const techniqueOptions = ['T1110 - Brute Force', 'T1204 - User Execution', 'T1046 - Network Service Scanning', 'T1486 - Data Encrypted for Impact', 'T1068 - Exploitation for Privilege Escalation', 'T1059 - Command and Scripting Interpreter', 'N/A - Unmapped'];
 
-const defaultRules: DetectionRule[] = [
-  { id: 'rule-brute-force', name: 'Brute Force Authentication', source: 'Auth Gateway', eventType: 'Failed Login', severity: 'CRITICAL', mitreTechnique: 'T1110 - Brute Force', thresholdCount: 5, timeWindowMinutes: 10, enabled: true, createdAt: '2026-08-30T00:00:00.000Z' },
-  { id: 'rule-port-scan', name: 'Perimeter Port Sweep', source: 'Firewall', eventType: 'Port Scan', severity: 'HIGH', mitreTechnique: 'T1046 - Network Service Scanning', thresholdCount: 20, timeWindowMinutes: 5, enabled: true, createdAt: '2026-08-30T00:00:00.000Z' },
-  { id: 'rule-malware', name: 'Endpoint Malware Signal', source: 'Endpoint Agent', eventType: 'Malware Detection', severity: 'CRITICAL', mitreTechnique: 'T1204 - User Execution', thresholdCount: 1, timeWindowMinutes: 15, enabled: true, createdAt: '2026-08-30T00:00:00.000Z' }
+export const defaultRules: DetectionRule[] = [
+  { id: 'rule-brute-force', name: 'Brute Force Authentication', source: 'Auth Gateway', eventType: 'Failed Login', severity: 'CRITICAL', mitreTechnique: 'T1110 - Brute Force', thresholdCount: 5, timeWindowMinutes: 10, enabled: true, createdAt: '2026-08-30T00:00:00.000Z', hitCount: 0 },
+  { id: 'rule-port-scan', name: 'Perimeter Port Sweep', source: 'Firewall', eventType: 'Port Scan', severity: 'HIGH', mitreTechnique: 'T1046 - Network Service Scanning', thresholdCount: 20, timeWindowMinutes: 5, enabled: true, createdAt: '2026-08-30T00:00:00.000Z', hitCount: 0 },
+  { id: 'rule-malware', name: 'Endpoint Malware Signal', source: 'Endpoint Agent', eventType: 'Malware Detection', severity: 'CRITICAL', mitreTechnique: 'T1204 - User Execution', thresholdCount: 1, timeWindowMinutes: 15, enabled: true, createdAt: '2026-08-30T00:00:00.000Z', hitCount: 0 }
 ];
 
 const emptyForm: RuleForm = {
@@ -37,6 +25,11 @@ const emptyForm: RuleForm = {
   thresholdCount: 5,
   timeWindowMinutes: 10,
   enabled: true
+};
+
+type RulesPageProps = {
+  rules: DetectionRule[];
+  onRulesChange: (rules: DetectionRule[]) => void;
 };
 
 const panelStyle: CSSProperties = {
@@ -59,22 +52,10 @@ const inputStyle: CSSProperties = {
   outline: 'none'
 };
 
-function RulesPage() {
-  const [rules, setRules] = useState<DetectionRule[]>(() => {
-    try {
-      const saved = localStorage.getItem('sentinel-detection-rules');
-      return saved ? JSON.parse(saved) as DetectionRule[] : defaultRules;
-    } catch {
-      return defaultRules;
-    }
-  });
+function RulesPage({ rules, onRulesChange }: RulesPageProps) {
   const [form, setForm] = useState<RuleForm>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('sentinel-detection-rules', JSON.stringify(rules));
-  }, [rules]);
 
   const handleEventTypeChange = (eventType: string) => {
     const mapping = getMitreMapping(eventType);
@@ -98,14 +79,15 @@ function RulesPage() {
     }
 
     if (editingId) {
-      setRules((current) => current.map((rule) => rule.id === editingId ? { ...rule, ...form, name: form.name.trim() } : rule));
+      onRulesChange(rules.map((rule) => rule.id === editingId ? { ...rule, ...form, name: form.name.trim() } : rule));
     } else {
-      setRules((current) => [{
+      onRulesChange([{
         ...form,
         name: form.name.trim(),
         id: `rule-${Date.now()}`,
-        createdAt: new Date().toISOString()
-      }, ...current]);
+        createdAt: new Date().toISOString(),
+        hitCount: 0
+      }, ...rules]);
     }
 
     setForm(emptyForm);
@@ -123,7 +105,7 @@ function RulesPage() {
 
   const deleteRule = (ruleId: string) => {
     if (!window.confirm('Delete this detection rule?')) return;
-    setRules((current) => current.filter((rule) => rule.id !== ruleId));
+    onRulesChange(rules.filter((rule) => rule.id !== ruleId));
     if (editingId === ruleId) {
       setEditingId(null);
       setForm(emptyForm);
@@ -176,7 +158,7 @@ function RulesPage() {
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', minWidth: '1050px', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead><tr style={{ color: '#93c5fd', textAlign: 'left', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-              {['Rule', 'Source', 'Event Type', 'Severity', 'MITRE', 'Threshold', 'Window', 'State', 'Actions'].map((heading) => <th key={heading} style={{ padding: '0.85rem 0.75rem', borderBottom: '1px solid rgba(148, 163, 184, 0.16)', whiteSpace: 'nowrap' }}>{heading}</th>)}
+              {['Rule', 'Source', 'Event Type', 'Severity', 'MITRE', 'Threshold', 'Window', 'Hits', 'Last Triggered', 'State', 'Actions'].map((heading) => <th key={heading} style={{ padding: '0.85rem 0.75rem', borderBottom: '1px solid rgba(148, 163, 184, 0.16)', whiteSpace: 'nowrap' }}>{heading}</th>)}
             </tr></thead>
             <tbody>
               {rules.map((rule) => <tr key={rule.id} style={{ borderBottom: '1px solid rgba(148, 163, 184, 0.1)', color: '#e2e8f0' }}>
@@ -187,10 +169,12 @@ function RulesPage() {
                 <td style={{ padding: '0.9rem 0.75rem', color: '#cbd5e1' }}>{rule.mitreTechnique}</td>
                 <td style={{ padding: '0.9rem 0.75rem', color: '#cbd5e1' }}>{rule.thresholdCount} events</td>
                 <td style={{ padding: '0.9rem 0.75rem', color: '#cbd5e1' }}>{rule.timeWindowMinutes} min</td>
+                <td style={{ padding: '0.9rem 0.75rem', color: '#f8fafc', fontWeight: 700 }}>{rule.hitCount ?? 0}</td>
+                <td style={{ padding: '0.9rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{rule.lastTriggered ? new Date(rule.lastTriggered).toLocaleString() : 'Never'}</td>
                 <td style={{ padding: '0.9rem 0.75rem' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: rule.enabled ? '#86efac' : '#94a3b8', fontWeight: 700 }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: rule.enabled ? '#4ade80' : '#64748b' }} />{rule.enabled ? 'Enabled' : 'Disabled'}</span></td>
                 <td style={{ padding: '0.9rem 0.75rem' }}><div style={{ display: 'flex', gap: '0.4rem' }}><button type="button" onClick={() => editRule(rule)} style={{ border: '1px solid rgba(96, 165, 250, 0.35)', background: 'rgba(59, 130, 246, 0.12)', color: '#bfdbfe', borderRadius: '8px', padding: '0.4rem 0.55rem', cursor: 'pointer' }}>Edit</button><button type="button" onClick={() => deleteRule(rule.id)} style={{ border: '1px solid rgba(248, 113, 113, 0.35)', background: 'rgba(239, 68, 68, 0.1)', color: '#fca5a5', borderRadius: '8px', padding: '0.4rem 0.55rem', cursor: 'pointer' }}>Delete</button></div></td>
               </tr>)}
-              {rules.length === 0 && <tr><td colSpan={9} style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>No detection rules configured.</td></tr>}
+              {rules.length === 0 && <tr><td colSpan={11} style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>No detection rules configured.</td></tr>}
             </tbody>
           </table>
         </div>

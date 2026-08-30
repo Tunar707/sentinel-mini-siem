@@ -5,8 +5,10 @@ import KPIGrid from './components/KPIGrid';
 import IncidentPanel from './components/IncidentPanel';
 import EventTable from './components/EventTable';
 import SearchBar from './components/SearchBar';
-import RulesPage from './components/RulesPage';
+import RulesPage, { defaultRules } from './components/RulesPage';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
+import type { DetectionRule } from './types/rule';
+import { evaluateDetectionRules } from './utils/detectionEngine';
 import { getMitreMapping } from './utils/mitre';
 
 type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Rules' | 'Threat Intel' | 'Analyst';
@@ -93,6 +95,18 @@ type IncidentDetail = {
   message?: string;
   notes: IncidentNote[];
   timeline: TimelineEntry[];
+  triggeredByRule?: {
+    name: string;
+    mitreTechnique: string;
+    triggerTimestamp: string;
+  };
+};
+
+type DetectedIncident = {
+  log: LogEntry;
+  ruleName: string;
+  mitreTechnique: string;
+  triggerTimestamp: string;
 };
 
 const sourceOptions = ['Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIEM Correlation', 'Identity Provider', 'CloudTrail', 'Web Proxy', 'Kubernetes', 'Email Gateway'];
@@ -205,6 +219,16 @@ function App() {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [selectedIncidentDetail, setSelectedIncidentDetail] = useState<IncidentDetail | null>(null);
   const [incidentNoteDraft, setIncidentNoteDraft] = useState('');
+  const [rules, setRules] = useState<DetectionRule[]>(() => {
+    try {
+      const savedRules = localStorage.getItem('sentinel-detection-rules');
+      const parsedRules = savedRules ? JSON.parse(savedRules) as DetectionRule[] : defaultRules;
+      return parsedRules.map((rule) => ({ ...rule, hitCount: rule.hitCount ?? 0 }));
+    } catch {
+      return defaultRules;
+    }
+  });
+  const [detectedIncidents, setDetectedIncidents] = useState<DetectedIncident[]>([]);
   const [cases, setCases] = useState<CaseRecord[]>(() => {
     try {
       const savedCases = localStorage.getItem('sentinel-cases');
@@ -216,6 +240,18 @@ function App() {
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+  const rulesRef = useRef(rules);
+  const logsRef = useRef(logs);
+  const evaluatedEventIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    rulesRef.current = rules;
+    localStorage.setItem('sentinel-detection-rules', JSON.stringify(rules));
+  }, [rules]);
+
+  useEffect(() => {
+    logsRef.current = logs;
+  }, [logs]);
 
   useEffect(() => {
     localStorage.setItem('sentinel-cases', JSON.stringify(cases));
@@ -250,6 +286,36 @@ function App() {
     }
   };
 
+  const evaluateIncomingEvent = (incoming: LogEntry, history: LogEntry[]) => {
+    if (evaluatedEventIdsRef.current.has(incoming.id)) return;
+    evaluatedEventIdsRef.current.add(incoming.id);
+    const matches = evaluateDetectionRules(incoming, history, rulesRef.current);
+    if (matches.length === 0) return;
+
+    const createdIncidents = matches.map(({ rule, triggerTimestamp, eventCount }) => ({
+      log: {
+        id: `detected-${rule.id}-${incoming.id}`,
+        timestamp: triggerTimestamp,
+        source: incoming.source,
+        eventType: incoming.eventType,
+        severity: 'CRITICAL' as const,
+        message: `Detection rule "${rule.name}" matched ${eventCount} ${incoming.eventType} event${eventCount === 1 ? '' : 's'} within ${rule.timeWindowMinutes} minute${rule.timeWindowMinutes === 1 ? '' : 's'}.`
+      },
+      ruleName: rule.name,
+      mitreTechnique: rule.mitreTechnique,
+      triggerTimestamp
+    }));
+
+    setDetectedIncidents((current) => {
+      const existingIds = new Set(current.map((incident) => incident.log.id));
+      return [...createdIncidents.filter((incident) => !existingIds.has(incident.log.id)), ...current];
+    });
+    setRules((current) => current.map((rule) => {
+      const match = matches.find(({ rule: matchedRule }) => matchedRule.id === rule.id);
+      return match ? { ...rule, hitCount: (rule.hitCount ?? 0) + 1, lastTriggered: match.triggerTimestamp } : rule;
+    }));
+  };
+
   const filterLogs = (items: LogEntry[]) => items.filter((log) => {
     const matchesSearch = !search || [log.source, log.eventType, log.message].some((value) =>
       value.toLowerCase().includes(search.toLowerCase())
@@ -275,8 +341,9 @@ function App() {
   };
 
   const incidentLogs = logs.filter((log) => log.severity === 'CRITICAL');
+  const detectedIncidentLogs = detectedIncidents.map((incident) => incident.log);
   const filteredLogs = filterLogs(logs);
-  const filteredCriticalLogs = filterLogs(incidentLogs);
+  const filteredCriticalLogs = filterLogs([...incidentLogs, ...detectedIncidentLogs]);
 
   const totalEvents = logs.length;
   const criticalCount = logs.filter((log) => log.severity === 'CRITICAL').length;
@@ -337,6 +404,7 @@ function App() {
     const handleLogEvent = (event: MessageEvent<string>) => {
       try {
         const incoming = JSON.parse(event.data) as LogEntry;
+        evaluateIncomingEvent(incoming, logsRef.current);
         setLogs((current) => {
           const exists = current.some((log) => log.id === incoming.id);
           if (exists) return current;
@@ -367,10 +435,41 @@ function App() {
 
   const handleIncidentSelect = async (incidentId: string) => {
     setSelectedIncidentId(incidentId);
-    try {
-      await fetchIncidentDetail(incidentId);
-    } catch {
-      setSelectedIncidentDetail(null);
+    const detectedIncident = detectedIncidents.find((incident) => incident.log.id === incidentId);
+
+    if (detectedIncident) {
+      setSelectedIncidentDetail({
+        id: detectedIncident.log.id,
+        logId: detectedIncident.log.id,
+        status: 'New',
+        assignedAnalyst: 'Tunar',
+        createdAt: detectedIncident.triggerTimestamp,
+        updatedAt: detectedIncident.triggerTimestamp,
+        source: detectedIncident.log.source,
+        eventType: detectedIncident.log.eventType,
+        severity: detectedIncident.log.severity,
+        timestamp: detectedIncident.triggerTimestamp,
+        message: detectedIncident.log.message,
+        notes: [],
+        timeline: [{
+          id: `${detectedIncident.log.id}-created`,
+          type: 'created',
+          timestamp: detectedIncident.triggerTimestamp,
+          message: 'Critical incident created by detection engine',
+          analyst: 'Detection Engine'
+        }],
+        triggeredByRule: {
+          name: detectedIncident.ruleName,
+          mitreTechnique: detectedIncident.mitreTechnique,
+          triggerTimestamp: detectedIncident.triggerTimestamp
+        }
+      });
+    } else {
+      try {
+        await fetchIncidentDetail(incidentId);
+      } catch {
+        setSelectedIncidentDetail(null);
+      }
     }
     const row = document.getElementById(`log-row-${incidentId}`);
     if (row) {
@@ -632,6 +731,8 @@ function App() {
         throw new Error(body.error || 'Failed to submit event');
       }
 
+      const createdLog = await res.json() as LogEntry;
+      evaluateIncomingEvent(createdLog, logsRef.current);
       await fetchLogs(auth.token);
       setComposerSuccess('Event submitted successfully.');
       resetComposer();
@@ -792,7 +893,7 @@ function App() {
     }
 
     if (activePage === 'Rules') {
-      return <RulesPage />;
+      return <RulesPage rules={rules} onRulesChange={setRules} />;
     }
 
     if (activePage === 'Threat Intel') {
@@ -1661,6 +1762,13 @@ function App() {
                 </button>
               </div>
             </div>
+
+            {drawerIncident.incident.triggeredByRule && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', flexWrap: 'wrap', marginBottom: '1rem', padding: '0.6rem 0.7rem', borderRadius: '10px', background: 'rgba(249, 115, 22, 0.12)', border: '1px solid rgba(249, 115, 22, 0.3)', color: '#fed7aa', fontSize: '0.75rem', fontWeight: 700 }}>
+                <span>Triggered by: {drawerIncident.incident.triggeredByRule.name}</span>
+                <span style={{ color: '#fdba74', fontWeight: 500 }}>{drawerIncident.incident.triggeredByRule.mitreTechnique} · {new Date(drawerIncident.incident.triggeredByRule.triggerTimestamp).toLocaleString()}</span>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gap: '1rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
