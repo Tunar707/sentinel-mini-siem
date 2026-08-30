@@ -6,9 +6,12 @@ import IncidentPanel from './components/IncidentPanel';
 import EventTable from './components/EventTable';
 import SearchBar from './components/SearchBar';
 import RulesPage, { defaultRules } from './components/RulesPage';
+import ThreatIntelPage, { defaultIocs } from './components/ThreatIntelPage';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
 import type { DetectionRule } from './types/rule';
+import type { IOC } from './types/ioc';
 import { evaluateDetectionRules } from './utils/detectionEngine';
+import { evaluateIOCs } from './utils/iocEngine';
 import { getMitreMapping } from './utils/mitre';
 
 type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Rules' | 'Threat Intel' | 'Analyst';
@@ -100,13 +103,21 @@ type IncidentDetail = {
     mitreTechnique: string;
     triggerTimestamp: string;
   };
+  iocMatches?: {
+    value: string;
+    threatFamily: string;
+  }[];
 };
 
 type DetectedIncident = {
   log: LogEntry;
-  ruleName: string;
-  mitreTechnique: string;
+  ruleName?: string;
+  mitreTechnique?: string;
   triggerTimestamp: string;
+  iocMatches?: {
+    value: string;
+    threatFamily: string;
+  }[];
 };
 
 const sourceOptions = ['Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIEM Correlation', 'Identity Provider', 'CloudTrail', 'Web Proxy', 'Kubernetes', 'Email Gateway'];
@@ -228,6 +239,14 @@ function App() {
       return defaultRules;
     }
   });
+  const [iocs, setIOCs] = useState<IOC[]>(() => {
+    try {
+      const savedIOCs = localStorage.getItem('sentinel-iocs');
+      return savedIOCs ? JSON.parse(savedIOCs) as IOC[] : defaultIocs;
+    } catch {
+      return defaultIocs;
+    }
+  });
   const [detectedIncidents, setDetectedIncidents] = useState<DetectedIncident[]>([]);
   const [cases, setCases] = useState<CaseRecord[]>(() => {
     try {
@@ -241,6 +260,7 @@ function App() {
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
   const rulesRef = useRef(rules);
+  const iocsRef = useRef(iocs);
   const logsRef = useRef(logs);
   const evaluatedEventIdsRef = useRef(new Set<string>());
 
@@ -248,6 +268,11 @@ function App() {
     rulesRef.current = rules;
     localStorage.setItem('sentinel-detection-rules', JSON.stringify(rules));
   }, [rules]);
+
+  useEffect(() => {
+    iocsRef.current = iocs;
+    localStorage.setItem('sentinel-iocs', JSON.stringify(iocs));
+  }, [iocs]);
 
   useEffect(() => {
     logsRef.current = logs;
@@ -289,10 +314,11 @@ function App() {
   const evaluateIncomingEvent = (incoming: LogEntry, history: LogEntry[]) => {
     if (evaluatedEventIdsRef.current.has(incoming.id)) return;
     evaluatedEventIdsRef.current.add(incoming.id);
-    const matches = evaluateDetectionRules(incoming, history, rulesRef.current);
-    if (matches.length === 0) return;
+    const ruleMatches = evaluateDetectionRules(incoming, history, rulesRef.current);
+    const iocMatches = evaluateIOCs(incoming, iocsRef.current);
+    if (ruleMatches.length === 0 && iocMatches.length === 0) return;
 
-    const createdIncidents = matches.map(({ rule, triggerTimestamp, eventCount }) => ({
+    const ruleIncidents = ruleMatches.map(({ rule, triggerTimestamp, eventCount }) => ({
       log: {
         id: `detected-${rule.id}-${incoming.id}`,
         timestamp: triggerTimestamp,
@@ -305,13 +331,26 @@ function App() {
       mitreTechnique: rule.mitreTechnique,
       triggerTimestamp
     }));
+    const iocIncidents = iocMatches.map(({ ioc, triggerTimestamp }) => ({
+      log: {
+        id: `detected-ioc-${ioc.id}-${incoming.id}`,
+        timestamp: triggerTimestamp,
+        source: incoming.source,
+        eventType: incoming.eventType,
+        severity: 'CRITICAL' as const,
+        message: `IOC match detected for ${ioc.value} (${ioc.threatFamily}).`
+      },
+      triggerTimestamp,
+      iocMatches: [{ value: ioc.value, threatFamily: ioc.threatFamily }]
+    }));
+    const createdIncidents = [...ruleIncidents, ...iocIncidents];
 
     setDetectedIncidents((current) => {
       const existingIds = new Set(current.map((incident) => incident.log.id));
       return [...createdIncidents.filter((incident) => !existingIds.has(incident.log.id)), ...current];
     });
     setRules((current) => current.map((rule) => {
-      const match = matches.find(({ rule: matchedRule }) => matchedRule.id === rule.id);
+      const match = ruleMatches.find(({ rule: matchedRule }) => matchedRule.id === rule.id);
       return match ? { ...rule, hitCount: (rule.hitCount ?? 0) + 1, lastTriggered: match.triggerTimestamp } : rule;
     }));
   };
@@ -458,11 +497,14 @@ function App() {
           message: 'Critical incident created by detection engine',
           analyst: 'Detection Engine'
         }],
-        triggeredByRule: {
-          name: detectedIncident.ruleName,
-          mitreTechnique: detectedIncident.mitreTechnique,
-          triggerTimestamp: detectedIncident.triggerTimestamp
-        }
+        ...(detectedIncident.ruleName && detectedIncident.mitreTechnique ? {
+          triggeredByRule: {
+            name: detectedIncident.ruleName,
+            mitreTechnique: detectedIncident.mitreTechnique,
+            triggerTimestamp: detectedIncident.triggerTimestamp
+          }
+        } : {}),
+        iocMatches: detectedIncident.iocMatches
       });
     } else {
       try {
@@ -897,6 +939,10 @@ function App() {
     }
 
     if (activePage === 'Threat Intel') {
+      return <ThreatIntelPage iocs={iocs} onIOCsChange={setIOCs} />;
+    }
+
+    if (false) {
       return (
         <section style={{ display: 'grid', gap: '1.2rem' }}>
           <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.5rem' }}>
@@ -1769,6 +1815,12 @@ function App() {
                 <span style={{ color: '#fdba74', fontWeight: 500 }}>{drawerIncident.incident.triggeredByRule.mitreTechnique} · {new Date(drawerIncident.incident.triggeredByRule.triggerTimestamp).toLocaleString()}</span>
               </div>
             )}
+            {drawerIncident.incident.iocMatches?.map((match) => (
+              <div key={`${match.value}-${match.threatFamily}`} style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', flexWrap: 'wrap', marginBottom: '1rem', padding: '0.6rem 0.7rem', borderRadius: '10px', background: 'rgba(244, 63, 94, 0.12)', border: '1px solid rgba(244, 63, 94, 0.32)', color: '#fecdd3', fontSize: '0.75rem', fontWeight: 700 }}>
+                <span>IOC Match</span>
+                <span style={{ color: '#fda4af', fontWeight: 600 }}>{match.value} · {match.threatFamily}</span>
+              </div>
+            ))}
 
             <div style={{ display: 'grid', gap: '1rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
