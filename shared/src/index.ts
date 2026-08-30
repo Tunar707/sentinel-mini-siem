@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const APP_NAME = "Sentinel Mini SIEM";
 export type HealthStatus = { status: string; service: string; user?: any };
 
-export type UserRole = "admin" | "analyst";
+export type UserRole = "admin" | "analyst" | "employee";
 
 export interface UserContext {
   id: string;

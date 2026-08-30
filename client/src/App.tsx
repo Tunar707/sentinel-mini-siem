@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { APP_NAME, HealthStatus, AuthResponse } from '@sentinel/shared';
+import { APP_NAME, HealthStatus, AuthResponse, type UserRole } from '@sentinel/shared';
 import Login from './Login';
 import KPIGrid from './components/KPIGrid';
 import IncidentPanel from './components/IncidentPanel';
@@ -179,6 +179,14 @@ type DetectedIncident = {
   }[];
 };
 
+const normaliseRole = (role?: string): UserRole => (role === 'employee' ? 'employee' : role === 'analyst' ? 'analyst' : 'admin');
+const roleDisplayMap: Record<UserRole, string> = { admin: 'Admin', analyst: 'Analyst', employee: 'Employee' };
+const rolePageAccess: Record<UserRole, PageName[]> = {
+  admin: ['Dashboard', 'Incidents', 'Events', 'Rules', 'Threat Intel', 'Assets', 'Users', 'Reports', 'Cases', 'Notifications'],
+  analyst: ['Dashboard', 'Incidents', 'Events', 'Assets', 'Cases', 'Reports', 'Notifications'],
+  employee: []
+};
+const getDefaultPageForRole = (role: UserRole): PageName => role === 'admin' ? 'Dashboard' : role === 'analyst' ? 'Dashboard' : 'Dashboard';
 const sourceOptions = ['Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIEM Correlation', 'Identity Provider', 'CloudTrail', 'Web Proxy', 'Kubernetes', 'Email Gateway'];
 const eventTypeOptions = ['Failed Login', 'Malware Detection', 'Port Scan', 'Brute Force', 'Critical Alert', 'Privilege Escalation', 'Suspicious Process', 'Data Exfiltration', 'Lateral Movement', 'Shadow IT'];
 const severityOptions: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
@@ -398,6 +406,12 @@ function App() {
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const currentUserRole = auth ? normaliseRole(auth.user.role) : 'admin';
+  const currentUserRoleLabel = roleDisplayMap[currentUserRole];
+  const canAccessPage = (page: PageName) => currentUserRole === 'employee' ? page === 'Dashboard' && portalMode === 'employee' : rolePageAccess[currentUserRole].includes(page);
+  const canManageRules = currentUserRole === 'admin';
+  const canManageUsers = currentUserRole === 'admin';
+  const canEditCases = currentUserRole === 'admin' || currentUserRole === 'analyst';
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
   const [assetNoteDraft, setAssetNoteDraft] = useState('');
   const [userNoteDraft, setUserNoteDraft] = useState('');
@@ -612,12 +626,24 @@ function App() {
     if (token) {
       fetchHealth(token);
       fetchLogs(token);
+      const storedRole = normaliseRole(localStorage.getItem('sentinel-role') ?? undefined);
       setAuth({
         token,
-        user: { id: 'cached', email: 'cached@local', role: 'analyst' }
+        user: { id: 'cached', email: 'cached@local', role: storedRole }
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!auth) return;
+    localStorage.setItem('sentinel-role', auth.user.role);
+    if (auth.user.role === 'employee') {
+      setPortalMode('employee');
+    }
+    if (!canAccessPage(activePage)) {
+      setActivePage(getDefaultPageForRole(currentUserRole));
+    }
+  }, [auth, activePage, currentUserRole]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -925,15 +951,16 @@ function App() {
     }} />;
   }
 
-  if (portalMode === 'employee') {
-    return (
-      <EmployeePortal
-        employeeName={auth.user.email}
-        tickets={employeeTickets}
-        onTicketSubmit={handleEmployeeTicketSubmit}
-        onSwitchToSOC={() => setPortalMode('soc')}
-        onLogout={() => {
-          localStorage.removeItem('token');
+if (portalMode === 'employee' || currentUserRole === 'employee') {
+      return (
+        <EmployeePortal
+          employeeName={auth.user.email}
+          tickets={employeeTickets}
+          onTicketSubmit={handleEmployeeTicketSubmit}
+          onSwitchToSOC={() => { if (currentUserRole !== 'employee') setPortalMode('soc'); }}
+          onLogout={() => {
+            localStorage.removeItem('token');
+            localStorage.removeItem('sentinel-role');
           setAuth(null);
           setPortalMode('soc');
         }}
@@ -1352,9 +1379,22 @@ function App() {
     { label: 'Threat Intel', icon: '✦' },
     { label: 'Reports', icon: '▥' },
     { label: 'Analyst', icon: '◌' }
-  ];
+  ].filter((item): item is { label: PageName; icon: string } => rolePageAccess[currentUserRole].includes(item.label as PageName));
 
   const renderPageContent = () => {
+    if (!canAccessPage(activePage)) {
+      return (
+        <section style={{ display: 'grid', placeItems: 'center', minHeight: '420px', padding: '2rem' }}>
+          <div style={{ maxWidth: '540px', width: '100%', background: 'rgba(15, 23, 42, 0.42)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '20px', padding: '2rem', textAlign: 'center' }}>
+            <div style={{ fontSize: '0.72rem', letterSpacing: '0.12em', color: '#93c5fd', textTransform: 'uppercase' }}>Access Denied</div>
+            <h2 style={{ margin: '0.75rem 0 0.5rem', fontSize: '2rem' }}>You do not have permission to view this page.</h2>
+            <p style={{ margin: 0, color: '#cbd5e1', lineHeight: 1.7 }}>Your current role, {currentUserRoleLabel}, does not include access to {activePage}. Contact an administrator for access.</p>
+            <button type="button" onClick={() => setActivePage(getDefaultPageForRole(currentUserRole))} style={{ marginTop: '1rem', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', border: 'none', color: '#eff6ff', borderRadius: '12px', padding: '0.75rem 1rem', cursor: 'pointer', fontWeight: 700 }}>Return to Dashboard</button>
+          </div>
+        </section>
+      );
+    }
+
     if (activePage === 'Incidents') {
       return (
         <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
@@ -1516,6 +1556,17 @@ function App() {
     }
 
     if (activePage === 'Users') {
+      if (!canManageUsers) {
+        return (
+          <section style={{ display: 'grid', placeItems: 'center', minHeight: '420px', padding: '2rem' }}>
+            <div style={{ maxWidth: '540px', width: '100%', background: 'rgba(15, 23, 42, 0.42)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '20px', padding: '2rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.72rem', letterSpacing: '0.12em', color: '#93c5fd', textTransform: 'uppercase' }}>Access Denied</div>
+              <h2 style={{ margin: '0.75rem 0 0.5rem', fontSize: '2rem' }}>User management is restricted.</h2>
+              <p style={{ margin: 0, color: '#cbd5e1', lineHeight: 1.7 }}>Only an administrator can manage users and account access.</p>
+            </div>
+          </section>
+        );
+      }
       const userDepartments = ['All', ...Array.from(new Set(users.map((user) => user.department)))];
       const userRoles = ['All', ...Array.from(new Set(users.map((user) => user.role)))];
       const filteredUsers = users.filter((user) => {
@@ -1986,6 +2037,17 @@ function App() {
     }
 
     if (activePage === 'Rules') {
+      if (!canManageRules) {
+        return (
+          <section style={{ display: 'grid', placeItems: 'center', minHeight: '420px', padding: '2rem' }}>
+            <div style={{ maxWidth: '540px', width: '100%', background: 'rgba(15, 23, 42, 0.42)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '20px', padding: '2rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.72rem', letterSpacing: '0.12em', color: '#93c5fd', textTransform: 'uppercase' }}>Access Denied</div>
+              <h2 style={{ margin: '0.75rem 0 0.5rem', fontSize: '2rem' }}>Rule editing is restricted.</h2>
+              <p style={{ margin: 0, color: '#cbd5e1', lineHeight: 1.7 }}>Only administrators can create, edit, or delete detection rules.</p>
+            </div>
+          </section>
+        );
+      }
       return <RulesPage rules={rules} onRulesChange={setRules} />;
     }
 
@@ -2775,9 +2837,27 @@ function App() {
                   borderRadius: '12px',
                   background: 'rgba(15, 23, 42, 0.55)',
                   padding: '0.7rem 0.9rem',
-                  color: '#dbeafe'
+                  color: '#dbeafe',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  flexWrap: 'wrap'
                 }}>
-                  {auth.user.email}
+                  <span>{auth.user.email}</span>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0.2rem 0.55rem',
+                    borderRadius: '999px',
+                    background: currentUserRole === 'admin' ? 'rgba(34, 197, 94, 0.14)' : currentUserRole === 'analyst' ? 'rgba(59, 130, 246, 0.14)' : 'rgba(168, 85, 247, 0.14)',
+                    color: currentUserRole === 'admin' ? '#86efac' : currentUserRole === 'analyst' ? '#bfdbfe' : '#e9d5ff',
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase'
+                  }}>{currentUserRoleLabel}</span>
                 </div>
                 <button onClick={() => {
                   localStorage.removeItem('token');
@@ -3223,12 +3303,12 @@ function App() {
                     </select>
                   </label>
                   <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Status
-                    <select value={selectedCase.status} onChange={(event) => updateCaseStatus(event.target.value as CaseStatus)} style={{ ...fieldStyle, marginTop: '0.35rem' }}>
+                    <select value={selectedCase.status} onChange={(event) => updateCaseStatus(event.target.value as CaseStatus)} disabled={!canEditCases} style={{ ...fieldStyle, marginTop: '0.35rem', opacity: canEditCases ? 1 : 0.6 }}>
                       {caseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
                   </label>
                   <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Assigned Analyst
-                    <select value={selectedCase.assignedAnalyst} onChange={(event) => updateCaseAssignment(event.target.value as AnalystName)} style={{ ...fieldStyle, marginTop: '0.35rem' }}>
+                    <select value={selectedCase.assignedAnalyst} onChange={(event) => updateCaseAssignment(event.target.value as AnalystName)} disabled={!canEditCases} style={{ ...fieldStyle, marginTop: '0.35rem', opacity: canEditCases ? 1 : 0.6 }}>
                       {demoAnalysts.map((analyst) => <option key={analyst} value={analyst}>{analyst}</option>)}
                     </select>
                   </label>
