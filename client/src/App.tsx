@@ -8,7 +8,7 @@ import SearchBar from './components/SearchBar';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Events' | 'Threat Intel' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Threat Intel' | 'Analyst';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -50,6 +50,34 @@ type TimelineEntry = {
   analyst?: string;
 };
 
+type CaseStatus = 'New' | 'Triage' | 'Investigating' | 'Contained' | 'Recovery' | 'Resolved';
+type CasePriority = 'P1' | 'P2' | 'P3' | 'P4';
+type CaseTimelineEntry = {
+  id: string;
+  type: 'created' | 'status' | 'assignment' | 'note';
+  timestamp: string;
+  message: string;
+  analyst?: string;
+};
+type CaseNote = {
+  id: string;
+  timestamp: string;
+  analyst: string;
+  content: string;
+};
+type CaseRecord = {
+  id: string;
+  incidentId: string;
+  incident: LogEntry;
+  priority: CasePriority;
+  status: CaseStatus;
+  assignedAnalyst: AnalystName;
+  sla: string;
+  createdAt: string;
+  timeline: CaseTimelineEntry[];
+  notes: CaseNote[];
+};
+
 type IncidentDetail = {
   id: string;
   logId: string;
@@ -70,6 +98,9 @@ const sourceOptions = ['Auth Gateway', 'Firewall', 'Endpoint Agent', 'VPN', 'SIE
 const eventTypeOptions = ['Failed Login', 'Malware Detection', 'Port Scan', 'Brute Force', 'Critical Alert', 'Privilege Escalation', 'Suspicious Process', 'Data Exfiltration', 'Lateral Movement', 'Shadow IT'];
 const severityOptions: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 const workflowStatuses: WorkflowStatus[] = ['New', 'Investigating', 'Contained', 'Resolved'];
+const caseStatuses: CaseStatus[] = ['New', 'Triage', 'Investigating', 'Contained', 'Recovery', 'Resolved'];
+const casePriorities: CasePriority[] = ['P1', 'P2', 'P3', 'P4'];
+const caseSlaOptions = ['4 hours', '8 hours', '24 hours', '72 hours'];
 const demoAnalysts: AnalystName[] = ['Tunar', 'Sarah', 'Michael', 'Emma'];
 const ipv4Regex = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.|$)){4}$/;
 const commonSourceOptions = [...sourceOptions];
@@ -173,7 +204,21 @@ function App() {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [selectedIncidentDetail, setSelectedIncidentDetail] = useState<IncidentDetail | null>(null);
   const [incidentNoteDraft, setIncidentNoteDraft] = useState('');
+  const [cases, setCases] = useState<CaseRecord[]>(() => {
+    try {
+      const savedCases = localStorage.getItem('sentinel-cases');
+      return savedCases ? JSON.parse(savedCases) as CaseRecord[] : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [caseNoteDraft, setCaseNoteDraft] = useState('');
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-cases', JSON.stringify(cases));
+  }, [cases]);
 
   const fetchHealth = async (token: string) => {
     try {
@@ -423,6 +468,90 @@ function App() {
     }
   };
 
+  const createCaseFromIncident = (incident: LogEntry) => {
+    if (cases.some((item) => item.incidentId === incident.id)) return;
+
+    const createdAt = new Date().toISOString();
+    const caseId = `CASE-${createdAt.slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    const nextCase: CaseRecord = {
+      id: caseId,
+      incidentId: incident.id,
+      incident,
+      priority: incident.severity === 'CRITICAL' ? 'P1' : 'P2',
+      status: 'New',
+      assignedAnalyst: 'Tunar',
+      sla: incident.severity === 'CRITICAL' ? '4 hours' : '8 hours',
+      createdAt,
+      timeline: [{
+        id: `${caseId}-created`,
+        type: 'created',
+        timestamp: createdAt,
+        message: 'Case created from critical incident',
+        analyst: auth.user.email
+      }],
+      notes: []
+    };
+
+    setCases((current) => [nextCase, ...current]);
+    setSelectedCaseId(caseId);
+    setSelectedIncidentId(null);
+    setActivePage('Cases');
+  };
+
+  const updateCase = (caseId: string, updates: Partial<CaseRecord>, timelineEntry?: CaseTimelineEntry) => {
+    setCases((current) => current.map((item) => item.id === caseId ? {
+      ...item,
+      ...updates,
+      timeline: timelineEntry ? [...item.timeline, timelineEntry].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : item.timeline
+    } : item));
+  };
+
+  const updateCaseStatus = (status: CaseStatus) => {
+    const selectedCase = cases.find((item) => item.id === selectedCaseId);
+    if (!selectedCase) return;
+    updateCase(selectedCase.id, { status }, {
+      id: `${selectedCase.id}-status-${Date.now()}`,
+      type: 'status',
+      timestamp: new Date().toISOString(),
+      message: `Status changed to ${status}`,
+      analyst: auth.user.email
+    });
+  };
+
+  const updateCaseAssignment = (assignedAnalyst: AnalystName) => {
+    const selectedCase = cases.find((item) => item.id === selectedCaseId);
+    if (!selectedCase) return;
+    updateCase(selectedCase.id, { assignedAnalyst }, {
+      id: `${selectedCase.id}-assignment-${Date.now()}`,
+      type: 'assignment',
+      timestamp: new Date().toISOString(),
+      message: `Assigned to ${assignedAnalyst}`,
+      analyst: auth.user.email
+    });
+  };
+
+  const addCaseNote = () => {
+    const selectedCase = cases.find((item) => item.id === selectedCaseId);
+    const content = caseNoteDraft.trim();
+    if (!selectedCase || !content) return;
+    const timestamp = new Date().toISOString();
+    updateCase(selectedCase.id, {
+      notes: [...selectedCase.notes, {
+        id: `${selectedCase.id}-note-${Date.now()}`,
+        timestamp,
+        analyst: auth.user.email,
+        content
+      }].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    }, {
+      id: `${selectedCase.id}-note-timeline-${Date.now()}`,
+      type: 'note',
+      timestamp,
+      message: `Note added by ${auth.user.email}`,
+      analyst: auth.user.email
+    });
+    setCaseNoteDraft('');
+  };
+
   const handleComposerChange = (field: keyof EventComposerState, value: string) => {
     setComposer((current) => ({ ...current, [field]: value }));
     setComposerError('');
@@ -513,6 +642,7 @@ function App() {
   const sidebarItems: { label: PageName; icon: string }[] = [
     { label: 'Dashboard', icon: '▣' },
     { label: 'Incidents', icon: '⚑' },
+    { label: 'Cases', icon: '▤' },
     { label: 'Events', icon: '◫' },
     { label: 'Threat Intel', icon: '✦' },
     { label: 'Analyst', icon: '◌' }
@@ -548,6 +678,8 @@ function App() {
             incidents={filteredCriticalLogs}
             selectedIncidentId={selectedIncidentId}
             onSelect={handleIncidentSelect}
+            onCreateCase={createCaseFromIncident}
+            caseIncidentIds={new Set(cases.map((item) => item.incidentId))}
           />
 
           {error && <p style={{ color: '#fca5a5', marginBottom: '1rem' }}>Error: {error}</p>}
@@ -559,6 +691,60 @@ function App() {
           ) : (
             <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.25rem' }}>
               <EventTable logs={filteredCriticalLogs} selectedIncidentId={selectedIncidentId} />
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    if (activePage === 'Cases') {
+      return (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Case Management</div>
+              <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Active Cases</h2>
+            </div>
+            <div style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{cases.length} {cases.length === 1 ? 'case' : 'cases'} tracked locally</div>
+          </div>
+
+          {cases.length === 0 ? (
+            <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '2rem', color: '#cbd5e1' }}>
+              No cases yet. Create one from a critical incident in the Incidents page.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {cases.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedCaseId(item.id)}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(180px, 1.2fr) repeat(4, minmax(90px, 0.7fr))',
+                    alignItems: 'center',
+                    gap: '1rem',
+                    textAlign: 'left',
+                    width: '100%',
+                    background: selectedCaseId === item.id ? 'rgba(59, 130, 246, 0.16)' : 'rgba(15, 23, 42, 0.42)',
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    borderRadius: '14px',
+                    padding: '1rem',
+                    color: '#e2e8f0',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div>
+                    <div style={{ color: '#bfdbfe', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.08em' }}>{item.id}</div>
+                    <div style={{ marginTop: '0.35rem', fontWeight: 700 }}>{item.incident.eventType}</div>
+                    <div style={{ marginTop: '0.2rem', color: '#94a3b8', fontSize: '0.78rem' }}>Incident {item.incident.id}</div>
+                  </div>
+                  <div><div style={{ color: '#94a3b8', fontSize: '0.68rem', textTransform: 'uppercase' }}>Priority</div><strong style={{ color: item.priority === 'P1' ? '#fca5a5' : '#fcd34d' }}>{item.priority}</strong></div>
+                  <div><div style={{ color: '#94a3b8', fontSize: '0.68rem', textTransform: 'uppercase' }}>Status</div><strong>{item.status}</strong></div>
+                  <div><div style={{ color: '#94a3b8', fontSize: '0.68rem', textTransform: 'uppercase' }}>Analyst</div><strong>{item.assignedAnalyst}</strong></div>
+                  <div><div style={{ color: '#94a3b8', fontSize: '0.68rem', textTransform: 'uppercase' }}>SLA</div><strong>{item.sla}</strong></div>
+                </button>
+              ))}
             </div>
           )}
         </section>
@@ -1225,6 +1411,18 @@ function App() {
   const drawerMitre = drawerIncident && drawerIncident.incident.eventType
     ? getMitreMapping(drawerIncident.incident.eventType)
     : { id: 'N/A', tactic: 'Unknown', color: '#64748b' };
+  const selectedCase = cases.find((item) => item.id === selectedCaseId) ?? null;
+  const drawerCaseIncident = drawerIncident
+    ? logs.find((log) => log.id === drawerIncident.incident.logId) ?? {
+        id: drawerIncident.incident.logId,
+        timestamp: drawerIncident.incident.timestamp ?? drawerIncident.incident.createdAt,
+        source: drawerIncident.incident.source ?? 'Unknown',
+        eventType: drawerIncident.incident.eventType ?? 'Unknown',
+        severity: (drawerIncident.incident.severity ?? 'CRITICAL') as Severity,
+        message: drawerIncident.incident.message ?? 'No description available.'
+      }
+    : null;
+  const drawerCaseExists = drawerCaseIncident ? cases.some((item) => item.incidentId === drawerCaseIncident.id) : false;
 
   return (
     <div style={{
@@ -1419,21 +1617,43 @@ function App() {
                 <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Incident Detail</div>
                 <h3 style={{ margin: '0.3rem 0 0', fontSize: '1.2rem' }}>{drawerIncident.incident.id}</h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedIncidentId(null)}
-                style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '10px',
-                  border: '1px solid rgba(148, 163, 184, 0.2)',
-                  background: 'rgba(15, 23, 42, 0.7)',
-                  color: '#e2e8f0',
-                  cursor: 'pointer'
-                }}
-              >
-                ×
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+                {drawerCaseIncident && (
+                  <button
+                    type="button"
+                    disabled={drawerCaseExists}
+                    onClick={() => createCaseFromIncident(drawerCaseIncident)}
+                    style={{
+                      border: drawerCaseExists ? '1px solid rgba(134, 239, 172, 0.25)' : '1px solid rgba(96, 165, 250, 0.55)',
+                      borderRadius: '9px',
+                      background: drawerCaseExists ? 'rgba(34, 197, 94, 0.12)' : 'linear-gradient(135deg, #2563eb, #0ea5e9)',
+                      color: drawerCaseExists ? '#86efac' : '#eff6ff',
+                      padding: '0.5rem 0.7rem',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      cursor: drawerCaseExists ? 'not-allowed' : 'pointer',
+                      boxShadow: drawerCaseExists ? 'none' : '0 8px 16px rgba(37, 99, 235, 0.24)'
+                    }}
+                  >
+                    {drawerCaseExists ? 'Case Created' : 'Create Case'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedIncidentId(null)}
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    background: 'rgba(15, 23, 42, 0.7)',
+                    color: '#e2e8f0',
+                    cursor: 'pointer'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gap: '1rem' }}>
@@ -1588,6 +1808,94 @@ function App() {
                   </div>
                 </div>
               )}
+            </div>
+          </aside>
+        )}
+
+        {selectedCase && (
+          <aside style={{
+            position: 'fixed',
+            top: '1.25rem',
+            right: '1.25rem',
+            width: 'min(440px, calc(100vw - 2rem))',
+            height: 'calc(100vh - 2.5rem)',
+            background: 'rgba(15, 23, 42, 0.84)',
+            border: '1px solid rgba(148, 163, 184, 0.22)',
+            borderRadius: '22px',
+            boxShadow: '0 35px 60px rgba(8, 15, 31, 0.5)',
+            backdropFilter: 'blur(18px)',
+            WebkitBackdropFilter: 'blur(18px)',
+            zIndex: 45,
+            padding: '1.1rem',
+            overflowY: 'auto',
+            animation: 'drawerSlideIn 0.25s ease'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Case Drawer</div>
+                <h3 style={{ margin: '0.3rem 0 0', fontSize: '1.2rem' }}>{selectedCase.id}</h3>
+              </div>
+              <button type="button" onClick={() => setSelectedCaseId(null)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', cursor: 'pointer' }}>×</button>
+            </div>
+
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Linked Incident</div>
+                <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedCase.incident.eventType} · {selectedCase.incident.id}</div>
+                <div style={{ color: '#cbd5e1', fontSize: '0.8rem', lineHeight: 1.5, marginTop: '0.35rem' }}>{selectedCase.incident.message}</div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Case Workflow</div>
+                <div style={{ display: 'grid', gap: '0.7rem' }}>
+                  <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Priority
+                    <select value={selectedCase.priority} onChange={(event) => updateCase(selectedCase.id, { priority: event.target.value as CasePriority })} style={{ ...fieldStyle, marginTop: '0.35rem' }}>
+                      {casePriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+                    </select>
+                  </label>
+                  <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Status
+                    <select value={selectedCase.status} onChange={(event) => updateCaseStatus(event.target.value as CaseStatus)} style={{ ...fieldStyle, marginTop: '0.35rem' }}>
+                      {caseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                  </label>
+                  <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>Assigned Analyst
+                    <select value={selectedCase.assignedAnalyst} onChange={(event) => updateCaseAssignment(event.target.value as AnalystName)} style={{ ...fieldStyle, marginTop: '0.35rem' }}>
+                      {demoAnalysts.map((analyst) => <option key={analyst} value={analyst}>{analyst}</option>)}
+                    </select>
+                  </label>
+                  <label style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>SLA
+                    <select value={selectedCase.sla} onChange={(event) => updateCase(selectedCase.id, { sla: event.target.value })} style={{ ...fieldStyle, marginTop: '0.35rem' }}>
+                      {caseSlaOptions.map((sla) => <option key={sla} value={sla}>{sla}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Case Notes</div>
+                <textarea value={caseNoteDraft} onChange={(event) => setCaseNoteDraft(event.target.value)} placeholder="Add markdown notes..." style={{ ...fieldStyle, minHeight: '90px', resize: 'vertical' }} />
+                <button type="button" onClick={addCaseNote} style={{ marginTop: '0.6rem', width: '100%', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', border: 'none', color: '#eff6ff', borderRadius: '12px', padding: '0.7rem 1rem', cursor: 'pointer', fontWeight: 700 }}>Add Note</button>
+                {selectedCase.notes.length > 0 && <div style={{ display: 'grid', gap: '0.7rem', marginTop: '0.8rem' }}>
+                  {selectedCase.notes.map((note) => <div key={note.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '10px', padding: '0.65rem 0.7rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', color: '#cbd5e1', fontSize: '0.68rem', marginBottom: '0.35rem' }}><span>{note.analyst}</span><span>{new Date(note.timestamp).toLocaleString()}</span></div>
+                    <div style={{ color: '#e2e8f0', lineHeight: 1.6 }}>{renderMarkdownText(note.content)}</div>
+                  </div>)}
+                </div>}
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Timeline · Created {new Date(selectedCase.createdAt).toLocaleString()}</div>
+                <div style={{ display: 'grid', gap: '0.8rem', position: 'relative', paddingLeft: '0.85rem' }}>
+                  <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '2px', background: 'rgba(96, 165, 250, 0.34)' }} />
+                  {selectedCase.timeline.map((entry) => <div key={entry.id} style={{ display: 'flex', gap: '0.75rem', position: 'relative' }}>
+                    <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#60a5fa', border: '2px solid rgba(15,23,42,0.9)', marginTop: '0.3rem', position: 'relative', zIndex: 1 }} />
+                    <div style={{ flex: 1, background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '10px', padding: '0.55rem 0.65rem' }}>
+                      <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: '0.82rem', marginBottom: '0.2rem' }}>{entry.message}</div>
+                      <div style={{ color: '#cbd5e1', fontSize: '0.68rem' }}>{new Date(entry.timestamp).toLocaleString()} {entry.analyst ? `· ${entry.analyst}` : ''}</div>
+                    </div>
+                  </div>)}
+                </div>
+              </div>
             </div>
           </aside>
         )}
