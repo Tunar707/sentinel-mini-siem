@@ -272,6 +272,8 @@ function App() {
   });
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [caseNoteDraft, setCaseNoteDraft] = useState('');
+  const [responseChecklist, setResponseChecklist] = useState<Record<string, boolean>>({});
+  const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(null);
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
   const rulesRef = useRef(rules);
   const iocsRef = useRef(iocs);
@@ -531,6 +533,138 @@ function App() {
     setActivePage('Cases');
   }
 
+  const fieldStyle: React.CSSProperties = {
+    width: '100%',
+    borderRadius: '10px',
+    border: '1px solid rgba(148, 163, 184, 0.18)',
+    background: 'rgba(15, 23, 42, 0.7)',
+    color: '#e2e8f0',
+    padding: '0.7rem 0.8rem',
+    outline: 'none',
+    fontSize: '0.9rem',
+    boxSizing: 'border-box'
+  };
+
+  const selectedWorkflow = selectedIncidentDetail
+    ? {
+        status: selectedIncidentDetail.status,
+        assignedAnalyst: selectedIncidentDetail.assignedAnalyst,
+        notes: selectedIncidentDetail.notes ?? [],
+        timeline: selectedIncidentDetail.timeline ?? []
+      }
+    : null;
+
+  const drawerIncident = selectedIncidentDetail && selectedWorkflow ? {
+    incident: selectedIncidentDetail,
+    workflow: selectedWorkflow
+  } : null;
+
+  const drawerMitre = drawerIncident && drawerIncident.incident.eventType
+    ? getMitreMapping(drawerIncident.incident.eventType)
+    : { id: 'N/A', tactic: 'Unknown', color: '#64748b' };
+  const selectedCase = cases.find((item) => item.id === selectedCaseId) ?? null;
+  const drawerCaseIncident = drawerIncident
+    ? logs.find((log) => log.id === drawerIncident.incident.logId) ?? {
+        id: drawerIncident.incident.logId,
+        timestamp: drawerIncident.incident.timestamp ?? drawerIncident.incident.createdAt,
+        source: drawerIncident.incident.source ?? 'Unknown',
+        eventType: drawerIncident.incident.eventType ?? 'Unknown',
+        severity: (drawerIncident.incident.severity ?? 'CRITICAL') as Severity,
+        message: drawerIncident.incident.message ?? 'No description available.'
+      }
+    : null;
+  const drawerCaseExists = drawerCaseIncident ? cases.some((item) => item.incidentId === drawerCaseIncident.id) : false;
+
+  const caseChecklistItems = ['Isolate Host', 'Reset Credentials', 'Block Source IP', 'Notify User', 'Collect Forensic Evidence'];
+  const caseChecklistKey = selectedCase ? `sentinel-case-checklist-${selectedCase.id}` : '';
+
+  useEffect(() => {
+    if (!selectedCase) return;
+
+    try {
+      const savedChecklist = localStorage.getItem(caseChecklistKey);
+      setResponseChecklist(savedChecklist ? JSON.parse(savedChecklist) as Record<string, boolean> : {});
+    } catch {
+      setResponseChecklist({});
+    }
+  }, [caseChecklistKey, selectedCase?.id]);
+
+  useEffect(() => {
+    if (!selectedCase) return;
+    localStorage.setItem(caseChecklistKey, JSON.stringify(responseChecklist));
+  }, [caseChecklistKey, responseChecklist, selectedCase?.id]);
+
+  const caseEvidenceLogs = selectedCase ? (() => {
+    const caseTokens = new Set<string>();
+    const candidateText = [selectedCase.incident.message ?? '', selectedCase.incident.source ?? '', selectedCase.incident.eventType ?? '']
+      .join(' ')
+      .toLowerCase();
+
+    for (const match of candidateText.matchAll(/(?:source ip|ip|asset|endpoint|username|user|device):\s*([^|\n]+)/gi)) {
+      const token = match[1].trim().toLowerCase();
+      if (token) caseTokens.add(token);
+    }
+
+    const related = logs.filter((log) => {
+      if (log.id === selectedCase.incidentId) return true;
+
+      const haystack = [log.message, log.source, log.eventType].join(' ').toLowerCase();
+      const candidates = Array.from(haystack.matchAll(/(?:source ip|ip|asset|endpoint|username|user|device):\s*([^|\n]+)/gi), (match) => match[1].trim().toLowerCase());
+      const exactMatch = candidates.some((candidate) => caseTokens.has(candidate));
+      const sourceMatch = log.source.toLowerCase() === selectedCase.incident.source?.toLowerCase();
+      const eventMatch = log.eventType.toLowerCase() === selectedCase.incident.eventType?.toLowerCase();
+      return exactMatch || sourceMatch || eventMatch;
+    });
+
+    return related.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  })() : [];
+
+  const attackTimeline = selectedCase ? (() => {
+    const items = [
+      ...selectedCase.timeline.map((entry) => ({
+        id: entry.id,
+        timestamp: entry.timestamp,
+        type: entry.type,
+        label: entry.message,
+        detail: entry.analyst ? `Analyst: ${entry.analyst}` : 'System event'
+      })),
+      ...selectedCase.notes.map((note) => ({
+        id: note.id,
+        timestamp: note.timestamp,
+        type: 'note',
+        label: `Note: ${note.content}`,
+        detail: `Analyst: ${note.analyst}`
+      })),
+      ...caseEvidenceLogs.map((log) => ({
+        id: log.id,
+        timestamp: log.timestamp,
+        type: 'log',
+        label: `${log.eventType} · ${log.source}`,
+        detail: log.message
+      }))
+    ];
+
+    return items.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  })() : [];
+
+  const mitreProfile = selectedCase ? getMitreMapping(selectedCase.incident.eventType ?? 'Critical Alert') : { id: 'N/A', tactic: 'Unmapped', color: '#475569' };
+  const mitreRecommendations: Record<string, string> = {
+    T1110: 'Prioritize credential reset, MFA verification, and failed-login review across impacted accounts.',
+    T1204: 'Isolate the endpoint, inspect execution chain, and block the execution path until malware analysis is complete.',
+    T1046: 'Validate network segmentation and quickly review any host-to-host discovery activity that was observed.',
+    T1486: 'Focus on rapid containment, backups validation, and impact assessment for affected assets.'
+  };
+  const caseRiskScore = selectedCase ? (() => {
+    const severityScore = selectedCase.incident.severity === 'CRITICAL' ? 70 : selectedCase.incident.severity === 'HIGH' ? 55 : selectedCase.incident.severity === 'MEDIUM' ? 35 : 20;
+    const iocScore = detectedIncidents.some((incident) => incident.log.id === selectedCase.incidentId && (incident.iocMatches?.length ?? 0) > 0) ? 20 : 0;
+    const ruleScore = detectedIncidents.some((incident) => incident.log.id === selectedCase.incidentId) ? 20 : 0;
+    const eventScore = Math.min(25, caseEvidenceLogs.length * 5);
+    return Math.min(100, severityScore + iocScore + ruleScore + eventScore);
+  })() : 0;
+
+  const riskBand = caseRiskScore < 25 ? 'Low' : caseRiskScore < 50 ? 'Medium' : caseRiskScore < 75 ? 'High' : 'Critical';
+  const riskColor = riskBand === 'Low' ? '#22c55e' : riskBand === 'Medium' ? '#fbbf24' : riskBand === 'High' ? '#f97316' : '#ef4444';
+
   if (!auth) {
     return <Login onLogin={(data) => {
       setAuth(data);
@@ -607,15 +741,6 @@ function App() {
       }, 1800);
     }
   };
-
-  const selectedWorkflow = selectedIncidentDetail
-    ? {
-        status: selectedIncidentDetail.status,
-        assignedAnalyst: selectedIncidentDetail.assignedAnalyst,
-        notes: selectedIncidentDetail.notes ?? [],
-        timeline: selectedIncidentDetail.timeline ?? []
-      }
-    : null;
 
   const addIncidentNote = async () => {
     if (!selectedIncidentDetail || !selectedWorkflow) return;
@@ -1693,39 +1818,6 @@ function App() {
     );
   };
 
-  const fieldStyle: React.CSSProperties = {
-    width: '100%',
-    borderRadius: '10px',
-    border: '1px solid rgba(148, 163, 184, 0.18)',
-    background: 'rgba(15, 23, 42, 0.7)',
-    color: '#e2e8f0',
-    padding: '0.7rem 0.8rem',
-    outline: 'none',
-    fontSize: '0.9rem',
-    boxSizing: 'border-box'
-  };
-
-  const drawerIncident = selectedIncidentDetail && selectedWorkflow ? {
-    incident: selectedIncidentDetail,
-    workflow: selectedWorkflow
-  } : null;
-
-  const drawerMitre = drawerIncident && drawerIncident.incident.eventType
-    ? getMitreMapping(drawerIncident.incident.eventType)
-    : { id: 'N/A', tactic: 'Unknown', color: '#64748b' };
-  const selectedCase = cases.find((item) => item.id === selectedCaseId) ?? null;
-  const drawerCaseIncident = drawerIncident
-    ? logs.find((log) => log.id === drawerIncident.incident.logId) ?? {
-        id: drawerIncident.incident.logId,
-        timestamp: drawerIncident.incident.timestamp ?? drawerIncident.incident.createdAt,
-        source: drawerIncident.incident.source ?? 'Unknown',
-        eventType: drawerIncident.incident.eventType ?? 'Unknown',
-        severity: (drawerIncident.incident.severity ?? 'CRITICAL') as Severity,
-        message: drawerIncident.incident.message ?? 'No description available.'
-      }
-    : null;
-  const drawerCaseExists = drawerCaseIncident ? cases.some((item) => item.incidentId === drawerCaseIncident.id) : false;
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -2169,6 +2261,102 @@ function App() {
                 <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Linked Incident</div>
                 <div style={{ color: '#f8fafc', fontWeight: 700 }}>{selectedCase.incident.eventType} · {selectedCase.incident.id}</div>
                 <div style={{ color: '#cbd5e1', fontSize: '0.8rem', lineHeight: 1.5, marginTop: '0.35rem' }}>{selectedCase.incident.message}</div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Evidence Panel</div>
+                <div style={{ display: 'grid', gap: '0.6rem' }}>
+                  {caseEvidenceLogs.length === 0 ? (
+                    <div style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>No related telemetry was matched for this case.</div>
+                  ) : caseEvidenceLogs.map((log) => {
+                    const expanded = expandedEvidenceId === log.id;
+                    return (
+                      <div key={log.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '10px', overflow: 'hidden' }}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedEvidenceId(expanded ? null : log.id)}
+                          style={{
+                            width: '100%',
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#e2e8f0',
+                            padding: '0.7rem 0.8rem',
+                            textAlign: 'left',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '0.8rem' }}>{log.eventType}</strong>
+                            <span style={{ color: log.severity === 'CRITICAL' ? '#fca5a5' : log.severity === 'HIGH' ? '#fbbf24' : '#93c5fd', fontSize: '0.68rem', fontWeight: 700 }}>{log.severity}</span>
+                          </div>
+                          <div style={{ color: '#cbd5e1', fontSize: '0.68rem', marginTop: '0.25rem' }}>{log.source} · {new Date(log.timestamp).toLocaleString()}</div>
+                        </button>
+                        {expanded && (
+                          <div style={{ borderTop: '1px solid rgba(148, 163, 184, 0.12)', padding: '0.75rem 0.8rem', color: '#dbeafe', lineHeight: 1.6, fontSize: '0.76rem' }}>
+                            {log.message}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Attack Timeline</div>
+                <div style={{ display: 'grid', gap: '0.8rem', position: 'relative', paddingLeft: '0.85rem' }}>
+                  <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '2px', background: 'rgba(96, 165, 250, 0.34)' }} />
+                  {attackTimeline.map((entry) => (
+                    <div key={entry.id} style={{ display: 'flex', gap: '0.75rem', position: 'relative' }}>
+                      <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#60a5fa', border: '2px solid rgba(15,23,42,0.9)', marginTop: '0.3rem', position: 'relative', zIndex: 1 }} />
+                      <div style={{ flex: 1, background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '10px', padding: '0.55rem 0.65rem' }}>
+                        <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: '0.82rem', marginBottom: '0.2rem' }}>{entry.label}</div>
+                        <div style={{ color: '#cbd5e1', fontSize: '0.68rem' }}>{new Date(entry.timestamp).toLocaleString()} {entry.detail ? `· ${entry.detail}` : ''}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>MITRE Intelligence</div>
+                <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.8)', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
+                  <span style={{ display: 'inline-block', padding: '0.2rem 0.5rem', borderRadius: '9999px', background: mitreProfile.color, color: '#f8fafc', fontWeight: 700, fontSize: '0.72rem', letterSpacing: '0.04em', width: 'fit-content' }}>{mitreProfile.id}</span>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>{mitreProfile.tactic}</div>
+                  <div style={{ color: '#cbd5e1', fontSize: '0.74rem' }}>{mitreRecommendations[mitreProfile.id] ?? 'Review the mapped technique and validate whether additional telemetry is needed before escalating containment.'}</div>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Response Checklist</div>
+                <div style={{ display: 'grid', gap: '0.6rem' }}>
+                  {caseChecklistItems.map((task) => (
+                    <label key={task} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#e2e8f0', fontSize: '0.8rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(responseChecklist[task])}
+                        onChange={() => setResponseChecklist((current) => ({ ...current, [task]: !Boolean(current[task]) }))}
+                        style={{ accentColor: '#38bdf8' }}
+                      />
+                      <span>{task}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
+                <div style={{ color: '#93c5fd', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.7rem' }}>Case Risk Score</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ width: '92px', height: '92px', borderRadius: '50%', background: `conic-gradient(${riskColor} 0 ${caseRiskScore}%, rgba(148,163,184,0.18) ${caseRiskScore}% 100%)`, display: 'grid', placeItems: 'center' }}>
+                    <div style={{ width: '66px', height: '66px', borderRadius: '50%', background: 'rgba(15, 23, 42, 0.9)', display: 'grid', placeItems: 'center', border: '1px solid rgba(148, 163, 184, 0.18)' }}>
+                      <span style={{ fontSize: '1.15rem', fontWeight: 800, color: riskColor }}>{caseRiskScore}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#f8fafc', fontWeight: 800, fontSize: '1rem' }}>{riskBand}</div>
+                    <div style={{ color: '#cbd5e1', fontSize: '0.76rem', marginTop: '0.2rem' }}>Severity + IOC + rule + related events</div>
+                  </div>
+                </div>
               </div>
 
               <div style={{ background: 'rgba(15, 23, 42, 0.52)', border: '1px solid rgba(148, 163, 184, 0.16)', borderRadius: '12px', padding: '0.85rem' }}>
