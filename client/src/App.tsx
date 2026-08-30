@@ -5,10 +5,11 @@ import KPIGrid from './components/KPIGrid';
 import IncidentPanel from './components/IncidentPanel';
 import EventTable from './components/EventTable';
 import SearchBar from './components/SearchBar';
+import RulesPage from './components/RulesPage';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Threat Intel' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Rules' | 'Threat Intel' | 'Analyst';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -644,6 +645,7 @@ function App() {
     { label: 'Incidents', icon: '⚑' },
     { label: 'Cases', icon: '▤' },
     { label: 'Events', icon: '◫' },
+    { label: 'Rules', icon: '◇' },
     { label: 'Threat Intel', icon: '✦' },
     { label: 'Analyst', icon: '◌' }
   ];
@@ -787,6 +789,10 @@ function App() {
           )}
         </section>
       );
+    }
+
+    if (activePage === 'Rules') {
+      return <RulesPage />;
     }
 
     if (activePage === 'Threat Intel') {
