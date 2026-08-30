@@ -7,6 +7,7 @@ import EventTable from './components/EventTable';
 import SearchBar from './components/SearchBar';
 import RulesPage, { defaultRules } from './components/RulesPage';
 import ThreatIntelPage, { defaultIocs } from './components/ThreatIntelPage';
+import ReportsPage from './components/ReportsPage';
 import { LogEntry, Severity, SeverityFilter } from './types/log';
 import type { DetectionRule } from './types/rule';
 import type { IOC } from './types/ioc';
@@ -14,7 +15,7 @@ import { evaluateDetectionRules } from './utils/detectionEngine';
 import { evaluateIOCs } from './utils/iocEngine';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Rules' | 'Threat Intel' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -248,6 +249,7 @@ function App() {
     }
   });
   const [detectedIncidents, setDetectedIncidents] = useState<DetectedIncident[]>([]);
+  const [ruleHitEvents, setRuleHitEvents] = useState<{ ruleId: string; timestamp: string }[]>([]);
   const [cases, setCases] = useState<CaseRecord[]>(() => {
     try {
       const savedCases = localStorage.getItem('sentinel-cases');
@@ -353,6 +355,10 @@ function App() {
       const match = ruleMatches.find(({ rule: matchedRule }) => matchedRule.id === rule.id);
       return match ? { ...rule, hitCount: (rule.hitCount ?? 0) + 1, lastTriggered: match.triggerTimestamp } : rule;
     }));
+    setRuleHitEvents((current) => [
+      ...ruleMatches.map(({ rule, triggerTimestamp }) => ({ ruleId: rule.id, timestamp: triggerTimestamp })),
+      ...current
+    ]);
   };
 
   const filterLogs = (items: LogEntry[]) => items.filter((log) => {
@@ -790,6 +796,7 @@ function App() {
     { label: 'Events', icon: '◫' },
     { label: 'Rules', icon: '◇' },
     { label: 'Threat Intel', icon: '✦' },
+    { label: 'Reports', icon: '▥' },
     { label: 'Analyst', icon: '◌' }
   ];
 
@@ -940,6 +947,19 @@ function App() {
 
     if (activePage === 'Threat Intel') {
       return <ThreatIntelPage iocs={iocs} onIOCsChange={setIOCs} />;
+    }
+
+    if (activePage === 'Reports') {
+      return (
+        <ReportsPage
+          logs={logs}
+          incidents={[...incidentLogs.map((log) => ({ log, triggerTimestamp: log.timestamp })), ...detectedIncidents]}
+          cases={cases}
+          rules={rules}
+          ruleHitEvents={ruleHitEvents}
+          analystName={auth.user.email}
+        />
+      );
     }
 
     if (false) {
