@@ -154,11 +154,11 @@ Server:
 
 ## Default Accounts
 
-| Role     | Email                                                     | Password    |
-| -------- | --------------------------------------------------------- | ----------- |
-| Admin    | [admin@sentinel.local](mailto:admin@sentinel.local)       | admin123    |
-| Analyst  | [analyst@sentinel.local](mailto:analyst@sentinel.local)   | analyst123  |
-| Employee | [employee@sentinel.local](mailto:employee@sentinel.local) | employee123 |
+| Role | Email | Password |
+|--------|------------------|-------------|
+| Admin | `cached@local` | `admin123` |
+| Analyst | `analyst@local` | `analyst123` |
+| Employee | `employee@local` | `employee123` |
 
 ---
 
