@@ -309,6 +309,21 @@ const buildHourlySeries = (logs: LogEntry[]) => {
   return { counts, points, max, path, areaPath };
 };
 
+const mitreHeatmapTechniques = [
+  { id: 'T1110', label: 'Credential Access', color: '#f43f5e', tactic: 'Brute Force' },
+  { id: 'T1046', label: 'Discovery', color: '#38bdf8', tactic: 'Port Scan' },
+  { id: 'T1204', label: 'Execution', color: '#a78bfa', tactic: 'Malware' },
+  { id: 'T1486', label: 'Impact', color: '#f97316', tactic: 'Ransomware' },
+  { id: 'T1059', label: 'Execution', color: '#34d399', tactic: 'Scripted' },
+  { id: 'T1068', label: 'Privilege Escalation', color: '#fbbf24', tactic: 'Escalation' },
+] as const;
+
+const threatLevelColor = (score: number) => {
+  if (score <= 30) return '#22c55e';
+  if (score <= 70) return '#fbbf24';
+  return '#ef4444';
+};
+
 const escapeMarkdownHtml = (value: string) => value
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -613,6 +628,20 @@ function App() {
     const today = new Date();
     return logDate.toDateString() === today.toDateString();
   }).length;
+  const activeP1P2Cases = cases.filter((item) => (item.priority === 'P1' || item.priority === 'P2') && item.status !== 'Resolved').length;
+  const iocMatchCount = detectedIncidents.reduce((total, incident) => total + (incident.iocMatches?.length ?? 0), 0);
+  const threatScore = Math.min(100, Math.max(0, criticalCount * 18 + activeP1P2Cases * 20 + iocMatchCount * 6 + ruleHitEvents.length * 3));
+  const liveFeed = [...logs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 8);
+  const liveMitreHits = logs.reduce<Record<string, number>>((acc, log) => {
+    const mapping = getMitreMapping(log.eventType);
+    acc[mapping.id] = (acc[mapping.id] ?? 0) + 1;
+    return acc;
+  }, {});
+  const mitreHeatmap = mitreHeatmapTechniques.map((technique) => ({
+    ...technique,
+    hits: liveMitreHits[technique.id] ?? 0,
+    active: (liveMitreHits[technique.id] ?? 0) > 0
+  }));
 
   const hourlySeries = buildHourlySeries(logs);
   const severityDistribution = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((label) => ({
@@ -2338,6 +2367,51 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
             highCount={highCount}
             todayCount={todayCount}
           />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+          <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1rem 1.1rem' }}>
+            <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.55rem' }}>Threat Score</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+              <span style={{ fontSize: '2rem', fontWeight: 800, color: threatLevelColor(threatScore) }}>{threatScore}</span>
+              <span style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>/100</span>
+            </div>
+            <div style={{ marginTop: '0.7rem', display: 'inline-flex', alignItems: 'center', padding: '0.35rem 0.65rem', borderRadius: '999px', background: 'rgba(148, 163, 184, 0.08)', border: '1px solid rgba(148, 163, 184, 0.12)', color: threatLevelColor(threatScore), fontSize: '0.72rem', fontWeight: 700 }}>
+              {threatScore >= 75 ? 'Severe' : threatScore >= 45 ? 'Elevated' : 'Stable'} posture
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1rem 1.1rem' }}>
+            <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>Live Feed</div>
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
+              {liveFeed.map((log) => (
+                <div key={log.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '0.6rem', alignItems: 'center', background: 'rgba(15, 23, 42, 0.64)', border: '1px solid rgba(148, 163, 184, 0.1)', borderRadius: '10px', padding: '0.55rem 0.6rem' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: log.severity === 'CRITICAL' ? '#ef4444' : log.severity === 'HIGH' ? '#f59e0b' : '#38bdf8', boxShadow: '0 0 10px rgba(96,165,250,0.5)' }} />
+                  <div>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#e2e8f0' }}>{log.eventType}</div>
+                    <div style={{ fontSize: '0.64rem', color: '#94a3b8' }}>{log.source}</div>
+                  </div>
+                  <div style={{ fontSize: '0.64rem', color: '#cbd5e1' }}>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1rem 1.1rem' }}>
+            <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>MITRE Coverage</div>
+            <div style={{ display: 'grid', gap: '0.55rem' }}>
+              {mitreHeatmap.map((technique) => (
+                <div key={technique.id} style={{ display: 'grid', gridTemplateColumns: '52px 1fr auto', gap: '0.6rem', alignItems: 'center', background: 'rgba(15, 23, 42, 0.64)', border: '1px solid rgba(148, 163, 184, 0.1)', borderRadius: '10px', padding: '0.5rem 0.6rem' }}>
+                  <span style={{ display: 'inline-flex', justifyContent: 'center', alignItems: 'center', borderRadius: '8px', padding: '0.24rem 0.3rem', background: technique.color, color: '#f8fafc', fontSize: '0.64rem', fontWeight: 800 }}>{technique.id}</span>
+                  <div>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#e2e8f0' }}>{technique.label}</div>
+                    <div style={{ fontSize: '0.64rem', color: '#94a3b8' }}>{technique.tactic}</div>
+                  </div>
+                  <span style={{ fontSize: '0.76rem', color: technique.hits > 0 ? '#f8fafc' : '#94a3b8', fontWeight: 700 }}>{technique.hits} hits</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         <section
