@@ -1,113 +1,175 @@
-# Mini SIEM Tool 2
+# Sentinel Mini SIEM v2.0.0
 
-Mini SIEM Tool 2 is a lightweight security operations dashboard built with React, Express, Prisma, and SQLite. It simulates a modern SIEM workflow with authentication, log ingestion, alert detection, live monitoring, and MITRE ATT&CK tagging in a compact monorepo setup.
+A commercial-style **Security Operations Center (SOC)** simulation platform built with **React, TypeScript, Express, Prisma, and SQLite**.
 
-## Project Overview
+Sentinel Mini SIEM replicates the workflow of a modern SOC by combining real-time monitoring, incident response, threat intelligence, SOAR automation, executive reporting, and role-based access control into a single application.
 
-This project provides a practical learning environment for building a minimal SIEM console. It focuses on the operational flow that analysts commonly use when reviewing security events:
-
-- authenticate to the console
-- ingest events from security sources
-- monitor activity in near real time
-- detect suspicious patterns
-- review critical incidents
-- correlate event behavior with ATT&CK techniques
+---
 
 ## Features
 
-- JWT-based authentication
-- Protected API routes
-- Prisma-backed persistence with SQLite
-- Log ingestion and retrieval via REST APIs
-- Real-time event monitoring with Server-Sent Events (SSE)
-- SOC-style dashboard with KPI summary cards
-- Search and severity filtering
-- Incident panel for critical event tracking
-- Interactive log generator for sample event creation
-- MITRE ATT&CK mapping for key event types
-- Responsive dark-mode UI
+### SOC Operations
+
+* Real-time SOC Dashboard
+* Live Event Monitoring (SSE)
+* Incident Management
+* Case Management
+* Investigation Workspace
+* MITRE ATT&CK Mapping
+
+### Detection & Intelligence
+
+* Detection Rules Engine
+* IOC Repository
+* Threat Intelligence Correlation
+* Critical Incident Generation
+* Global Search & Investigation Pivot
+
+### Security Operations
+
+* SOAR Playbooks
+* Asset Inventory
+* User Directory
+* Employee Self-Service Portal
+* Notifications & SLA Tracking
+* Audit Log
+
+### Administration
+
+* Role-Based Access Control
+* Enterprise Settings
+* Executive Reports
+* Glassmorphism Dark UI
+
+---
 
 ## Architecture
 
-The project is organized as a monorepo with three primary workspaces:
+The project follows a lightweight monorepo architecture.
 
-- client: React + Vite frontend
-- server: Express + TypeScript API
-- shared: shared contracts and schemas
+```text
+client/      React + Vite + TypeScript
+server/      Express API + Prisma
+shared/      Shared types
+prisma/      SQLite database
+```
 
-### Runtime flow
+### Runtime Flow
 
-1. The React client logs in with a seeded admin account.
-2. The Express backend validates JWT tokens and serves protected routes.
-3. Log events are stored using Prisma and SQLite.
-4. New events are pushed to the dashboard through SSE.
-5. The frontend enriches event visibility with MITRE ATT&CK mappings.
+1. User authenticates into the SOC.
+2. Backend validates JWT credentials.
+3. Security events are stored in SQLite.
+4. Events stream to the dashboard using Server-Sent Events.
+5. Detection rules and IOC correlation generate critical incidents.
+6. Analysts investigate, create cases, and execute SOAR playbooks.
+
+---
 
 ## Tech Stack
 
-- React 19
-- Vite
-- TypeScript
-- Express
-- Prisma ORM
-- SQLite
-- bcrypt
-- JWT
-- Server-Sent Events (SSE)
-- Zod validation
+| Layer          | Technology            |
+| -------------- | --------------------- |
+| Frontend       | React 19 + TypeScript |
+| Build          | Vite                  |
+| Backend        | Node.js + Express     |
+| ORM            | Prisma                |
+| Database       | SQLite                |
+| Authentication | JWT                   |
+| Security       | bcrypt                |
+| Validation     | Zod                   |
+| Streaming      | Server-Sent Events    |
+
+---
 
 ## Screenshots
 
-> Screenshots will be added in a future release.
+### SOC Dashboard
 
-### Placeholder gallery
-- Login screen
-- Analyst dashboard
-- SOC console with KPIs
-- Incident center
-- MITRE-enriched event table
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Incident Center
+
+![Incidents](docs/screenshots/incidents.png)
+
+### Investigation Workspace
+
+![Cases](docs/screenshots/cases.png)
+
+### Detection Rules
+
+![Rules](docs/screenshots/rules.png)
+
+### Threat Intelligence
+
+![Threat Intel](docs/screenshots/threat-intel.png)
+
+### Executive Reports
+
+![Reports](docs/screenshots/reports.png)
+
+---
 
 ## Installation
 
-1. Clone the repository.
-2. Install workspace dependencies:
-   ```bash
-   npm install
-   ```
-3. Ensure the Prisma client is generated successfully:
-   ```bash
-   npx prisma generate
-   ```
-4. Start the backend and frontend together:
-   ```bash
-   npm run dev
-   ```
-5. Open the client in your browser and log in.
+Clone the repository.
 
-## Default Credentials
+```bash
+git clone https://github.com/Tunar707/sentinel-mini-siem.git
+cd sentinel-mini-siem
+```
 
-- Email: admin@sentinel.local
-- Password: admin123
+Install dependencies.
 
-## MITRE ATT&CK Support
+```bash
+npm install
+```
 
-The frontend includes a client-side MITRE mapping utility that enriches log events with technique IDs and tactics. The current supported mappings are:
+Generate Prisma client.
 
-- Failed Login → T1110 / Credential Access
-- BRUTE_FORCE_DETECTED → T1110 / Credential Access
-- Malware Detection → T1204 / Execution
-- Port Scan → T1046 / Discovery
-- Critical Alert → T1486 / Impact
+```bash
+npx prisma generate
+```
 
-This enrichment does not change the backend contract or Prisma schema and is intended to keep the SIEM workflow lightweight and easy to extend.
+Start the backend.
 
-## Notes
+```bash
+npm run dev --workspace server
+```
 
-- Authentication remains protected and unchanged.
-- Prisma schema remains stable for this version.
-- Existing REST API endpoints are preserved.
-- Real-time monitoring uses native EventSource rather than Socket.IO.
+Start the frontend.
 
-## Version
+```bash
+npm run dev --workspace client
+```
 
-Version 1.0
+Client:
+
+`http://localhost:5173`
+
+Server:
+
+`http://localhost:3000`
+
+---
+
+## Default Accounts
+
+| Role     | Email                                                     | Password    |
+| -------- | --------------------------------------------------------- | ----------- |
+| Admin    | [admin@sentinel.local](mailto:admin@sentinel.local)       | admin123    |
+| Analyst  | [analyst@sentinel.local](mailto:analyst@sentinel.local)   | analyst123  |
+| Employee | [employee@sentinel.local](mailto:employee@sentinel.local) | employee123 |
+
+---
+
+## Project Status
+
+**Release:** v2.0.0
+
+Stable portfolio release featuring SOC monitoring, incident response, threat intelligence, SOAR automation, reporting, RBAC, and enterprise administration.
+
+---
+
+## License
+
+MIT License
