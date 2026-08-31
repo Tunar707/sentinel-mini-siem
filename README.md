@@ -152,13 +152,11 @@ Server:
 
 ---
 
-## Default Accounts
+## Default Account
 
 | Role | Email | Password |
-|--------|------------------|-------------|
-| Admin | `cached@local` | `admin123` |
-| Analyst | `analyst@local` | `analyst123` |
-| Employee | `employee@local` | `employee123` |
+|------|-----------------------|-------------|
+| Admin | `admin@sentinel.local` | `admin123` |
 
 ---
 
