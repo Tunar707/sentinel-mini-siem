@@ -20,7 +20,7 @@ import { evaluateDetectionRules } from './utils/detectionEngine';
 import { evaluateIOCs } from './utils/iocEngine';
 import { getMitreMapping } from './utils/mitre';
 
-type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Users' | 'Notifications' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst';
+type PageName = 'Dashboard' | 'Incidents' | 'Cases' | 'Assets' | 'Users' | 'Notifications' | 'Events' | 'Rules' | 'Threat Intel' | 'Reports' | 'Analyst' | 'Settings' | 'Audit Log';
 type EventComposerState = {
   source: string;
   eventType: string;
@@ -104,6 +104,70 @@ type NotificationRecord = {
   relatedId?: string;
   actionLabel?: string;
   onUndo?: () => void;
+};
+
+type GlobalSearchResult = {
+  id: string;
+  kind: 'Event' | 'Incident' | 'Case' | 'Asset' | 'User' | 'IOC';
+  label: string;
+  detail: string;
+  value: string;
+};
+
+type SavedView = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  filters: {
+    severity: SeverityFilter;
+    mitre: string;
+    department: string;
+    analyst: string;
+    asset: string;
+    startDate: string;
+    endDate: string;
+    ioc: string;
+  };
+  createdAt: string;
+};
+
+type DashboardFilterState = {
+  severity: SeverityFilter;
+  mitre: string;
+  department: string;
+  analyst: string;
+  asset: string;
+  ioc: string;
+  startDate: string;
+  endDate: string;
+};
+
+type OrgBranding = {
+  companyName: string;
+  shortName: string;
+  accentColor: string;
+  accentSoft: string;
+  browserTitle: string;
+  loginTagline: string;
+};
+
+type AppSettings = {
+  alertDigest: boolean;
+  autoSave: boolean;
+  requireApproval: boolean;
+  defaultReportRange: 'today' | '7d' | '30d';
+  sessionTimeoutMinutes: number;
+  riskThreshold: number;
+};
+
+type AuditLogEntry = {
+  id: string;
+  actor: string;
+  action: string;
+  target: string;
+  details: string;
+  severity: 'Info' | 'Warning' | 'Critical';
+  createdAt: string;
 };
 
 type AssetStatus = 'Active' | 'Monitoring' | 'Isolated' | 'Offline';
@@ -284,6 +348,35 @@ const defaultComposerState: EventComposerState = {
   description: 'User login failed after repeated credential attempts.'
 };
 
+const defaultDashboardFilters: DashboardFilterState = {
+  severity: 'ALL',
+  mitre: 'All',
+  department: 'All',
+  analyst: 'All',
+  asset: 'All',
+  ioc: 'All',
+  startDate: '',
+  endDate: ''
+};
+
+const defaultBranding: OrgBranding = {
+  companyName: 'Sentinel',
+  shortName: 'S',
+  accentColor: '#2563eb',
+  accentSoft: '#38bdf8',
+  browserTitle: 'Sentinel SOC Console',
+  loginTagline: 'Unified security operations for modern enterprises'
+};
+
+const defaultAppSettings: AppSettings = {
+  alertDigest: true,
+  autoSave: true,
+  requireApproval: true,
+  defaultReportRange: '7d',
+  sessionTimeoutMinutes: 60,
+  riskThreshold: 80
+};
+
 const buildHourlySeries = (logs: LogEntry[]) => {
   const counts = Array.from({ length: 24 }, () => 0);
 
@@ -360,6 +453,87 @@ function App() {
   });
   const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('ALL');
+  const [draftDashboardFilters, setDraftDashboardFilters] = useState<DashboardFilterState>(defaultDashboardFilters);
+  const [appliedDashboardFilters, setAppliedDashboardFilters] = useState<DashboardFilterState>(defaultDashboardFilters);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchValue, setGlobalSearchValue] = useState('');
+  const [searchResultIndex, setSearchResultIndex] = useState(0);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('sentinel-recent-searches') ?? '[]') as string[];
+    } catch {
+      return [];
+    }
+  });
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
+    try {
+      const savedViewsValue = JSON.parse(localStorage.getItem('sentinel-saved-views') ?? '[]') as SavedView[];
+      return savedViewsValue.length > 0 ? savedViewsValue : [{
+        id: 'default-view',
+        name: 'Default view',
+        isDefault: true,
+        filters: defaultDashboardFilters,
+        createdAt: new Date().toISOString()
+      }];
+    } catch {
+      return [{
+        id: 'default-view',
+        name: 'Default view',
+        isDefault: true,
+        filters: defaultDashboardFilters,
+        createdAt: new Date().toISOString()
+      }];
+    }
+  });
+  const [organizationBranding, setOrganizationBranding] = useState<OrgBranding>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('sentinel-branding') ?? 'null') as OrgBranding ?? defaultBranding;
+    } catch {
+      return defaultBranding;
+    }
+  });
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('sentinel-settings') ?? 'null') as AppSettings ?? defaultAppSettings;
+    } catch {
+      return defaultAppSettings;
+    }
+  });
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('sentinel-audit-log') ?? '[]') as AuditLogEntry[];
+      return stored.length > 0 ? stored : [{
+        id: 'audit-seed-001',
+        actor: 'System',
+        action: 'Initial bootstrap',
+        target: 'Environment',
+        details: 'Enterprise settings and audit tracking initialized for the SOC workspace.',
+        severity: 'Info',
+        createdAt: new Date().toISOString()
+      }];
+    } catch {
+      return [{
+        id: 'audit-seed-001',
+        actor: 'System',
+        action: 'Initial bootstrap',
+        target: 'Environment',
+        details: 'Enterprise settings and audit tracking initialized for the SOC workspace.',
+        severity: 'Info',
+        createdAt: new Date().toISOString()
+      }];
+    }
+  });
+  const [advancedInvestigationCollapsed, setAdvancedInvestigationCollapsed] = useState<boolean>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('sentinel-advanced-investigation-collapsed') ?? 'true') as boolean;
+    } catch {
+      return true;
+    }
+  });
+  const [viewNameDraft, setViewNameDraft] = useState('');
+  const [saveViewModalOpen, setSaveViewModalOpen] = useState(false);
+  const [viewMenuOpenId, setViewMenuOpenId] = useState<string | null>(null);
+  const [entityPivot, setEntityPivot] = useState<{ kind: string; value: string; label: string } | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activePage, setActivePage] = useState<PageName>('Dashboard');
@@ -456,6 +630,11 @@ function App() {
   const [assetTypeFilter, setAssetTypeFilter] = useState<'All' | AssetType>('All');
   const [assetDepartmentFilter, setAssetDepartmentFilter] = useState<'All' | string>('All');
   const [assetCriticalityFilter, setAssetCriticalityFilter] = useState<'All' | AssetCriticality>('All');
+
+  const activeFilterCount = Object.values(appliedDashboardFilters).filter((value) => value && value !== 'All' && value !== '').length;
+  const dashboardFilterChips = Object.entries(appliedDashboardFilters)
+    .filter(([, value]) => value && value !== 'All' && value !== '')
+    .map(([key, value]) => ({ key, label: key === 'severity' ? `Severity: ${value}` : key === 'mitre' ? `MITRE: ${value}` : key === 'department' ? `Department: ${value}` : key === 'analyst' ? `Analyst: ${value}` : key === 'asset' ? `Asset: ${value}` : key === 'ioc' ? `IOC: ${value}` : key === 'startDate' ? `Start: ${value}` : key === 'endDate' ? `End: ${value}` : `${key}: ${value}` }));
   const [responseChecklist, setResponseChecklist] = useState<Record<string, boolean>>({});
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(null);
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
@@ -497,6 +676,251 @@ function App() {
   useEffect(() => {
     localStorage.setItem('sentinel-employee-tickets', JSON.stringify(employeeTickets));
   }, [employeeTickets]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-recent-searches', JSON.stringify(recentSearches.slice(0, 8)));
+  }, [recentSearches]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-saved-views', JSON.stringify(savedViews));
+  }, [savedViews]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-branding', JSON.stringify(organizationBranding));
+    document.title = organizationBranding.browserTitle || `${organizationBranding.companyName} SOC Console`;
+  }, [organizationBranding]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-settings', JSON.stringify(appSettings));
+  }, [appSettings]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-audit-log', JSON.stringify(auditLog.slice(0, 250)));
+  }, [auditLog]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel-advanced-investigation-collapsed', JSON.stringify(advancedInvestigationCollapsed));
+  }, [advancedInvestigationCollapsed]);
+
+  useEffect(() => {
+    const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setGlobalSearchOpen(true);
+        setTimeout(() => {
+          const input = document.getElementById('global-search-input');
+          input?.focus();
+        }, 0);
+      }
+
+      if (event.key === 'Escape' && globalSearchOpen) {
+        setGlobalSearchOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalSearchShortcut);
+    return () => window.removeEventListener('keydown', handleGlobalSearchShortcut);
+  }, [globalSearchOpen]);
+
+  const fuzzyMatch = (value: string, query: string) => {
+    const normalizedValue = value.toLowerCase();
+    const normalizedQuery = query.toLowerCase().trim();
+    if (!normalizedQuery) return true;
+    if (normalizedValue.includes(normalizedQuery)) return true;
+
+    let index = 0;
+    for (const char of normalizedValue) {
+      if (char === normalizedQuery[index]) {
+        index += 1;
+      }
+      if (index === normalizedQuery.length) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const openEntityPivot = (kind: string, value: string, label: string) => {
+    setEntityPivot({ kind, value, label });
+  };
+
+  const updateDashboardFilter = <K extends keyof DashboardFilterState>(key: K, value: DashboardFilterState[K]) => {
+    setDraftDashboardFilters((current) => ({ ...current, [key]: value }));
+  };
+
+  const applyDashboardFilters = () => {
+    setAppliedDashboardFilters({ ...draftDashboardFilters });
+    setSeverityFilter(draftDashboardFilters.severity);
+  };
+
+  const clearDashboardFilters = () => {
+    const reset = { ...defaultDashboardFilters };
+    setDraftDashboardFilters(reset);
+    setAppliedDashboardFilters(reset);
+    setSeverityFilter('ALL');
+  };
+
+  const saveCurrentView = () => {
+    const name = viewNameDraft.trim() || `View ${savedViews.filter((view) => !view.isDefault).length + 1}`;
+    const nextView: SavedView = {
+      id: `view-${Date.now()}`,
+      name,
+      isDefault: false,
+      filters: {
+        severity: appliedDashboardFilters.severity,
+        mitre: appliedDashboardFilters.mitre,
+        department: appliedDashboardFilters.department,
+        analyst: appliedDashboardFilters.analyst,
+        asset: appliedDashboardFilters.asset,
+        startDate: appliedDashboardFilters.startDate,
+        endDate: appliedDashboardFilters.endDate,
+        ioc: appliedDashboardFilters.ioc,
+      },
+      createdAt: new Date().toISOString(),
+    };
+
+    setSavedViews((current) => [nextView, ...current.filter((view) => !view.isDefault)].slice(0, 8));
+    setViewNameDraft('');
+    setSaveViewModalOpen(false);
+  };
+
+  const applySavedView = (savedView: SavedView) => {
+    const nextFilters = {
+      severity: savedView.filters.severity,
+      mitre: savedView.filters.mitre,
+      department: savedView.filters.department,
+      analyst: savedView.filters.analyst,
+      asset: savedView.filters.asset,
+      ioc: savedView.filters.ioc,
+      startDate: savedView.filters.startDate,
+      endDate: savedView.filters.endDate
+    };
+    setDraftDashboardFilters(nextFilters);
+    setAppliedDashboardFilters(nextFilters);
+    setSeverityFilter(savedView.filters.severity);
+  };
+
+  const deleteSavedView = (id: string) => {
+    setSavedViews((current) => current.filter((view) => view.id !== id));
+    setViewMenuOpenId(null);
+  };
+
+  const duplicateSavedView = (id: string) => {
+    const source = savedViews.find((view) => view.id === id);
+    if (!source) return;
+
+    const nextView: SavedView = {
+      ...source,
+      id: `view-${Date.now()}`,
+      name: `${source.name} Copy`,
+      isDefault: false,
+      createdAt: new Date().toISOString()
+    };
+
+    setSavedViews((current) => [nextView, ...current.filter((view) => view.id !== id)].slice(0, 8));
+    setViewMenuOpenId(null);
+  };
+
+  const setDefaultSavedView = (id: string) => {
+    setSavedViews((current) => current.map((view) => ({
+      ...view,
+      isDefault: view.id === id
+    })));
+    setViewMenuOpenId(null);
+  };
+
+  const buildGlobalSearchResults = (rawQuery: string): GlobalSearchResult[] => {
+    const query = rawQuery.trim();
+    if (!query) return [];
+
+    const results: GlobalSearchResult[] = [];
+
+    logs.forEach((log) => {
+      const haystack = `${log.source} ${log.eventType} ${log.message}`;
+      if (fuzzyMatch(haystack, query)) {
+        results.push({ id: `event-${log.id}`, kind: 'Event', label: log.eventType, detail: `${log.source} · ${new Date(log.timestamp).toLocaleString()}`, value: log.id });
+      }
+    });
+
+    detectedIncidents.forEach((incident) => {
+      const haystack = `${incident.log.eventType} ${incident.log.source} ${incident.log.message} ${incident.ruleName ?? ''} ${incident.mitreTechnique ?? ''}`;
+      if (fuzzyMatch(haystack, query)) {
+        results.push({ id: `incident-${incident.log.id}`, kind: 'Incident', label: incident.log.eventType, detail: `${incident.ruleName ?? 'Detection rule'} · ${new Date(incident.log.timestamp).toLocaleString()}`, value: incident.log.id });
+      }
+    });
+
+    cases.forEach((item) => {
+      const haystack = `${item.id} ${item.incident.eventType} ${item.assignedAnalyst} ${item.source} ${item.incident.message}`;
+      if (fuzzyMatch(haystack, query)) {
+        results.push({ id: `case-${item.id}`, kind: 'Case', label: item.id, detail: `${item.incident.eventType} · ${item.assignedAnalyst}`, value: item.id });
+      }
+    });
+
+    assets.forEach((asset) => {
+      const haystack = `${asset.hostname} ${asset.ip} ${asset.owner} ${asset.department} ${asset.type}`;
+      if (fuzzyMatch(haystack, query)) {
+        results.push({ id: `asset-${asset.id}`, kind: 'Asset', label: asset.hostname, detail: `${asset.ip} · ${asset.department}`, value: asset.hostname });
+      }
+    });
+
+    users.forEach((user) => {
+      const haystack = `${user.name} ${user.email} ${user.department} ${user.role} ${user.devices.join(' ')}`;
+      if (fuzzyMatch(haystack, query)) {
+        results.push({ id: `user-${user.id}`, kind: 'User', label: user.name, detail: `${user.department} · ${user.email}`, value: user.name });
+      }
+    });
+
+    iocs.forEach((ioc) => {
+      const haystack = `${ioc.value} ${ioc.threatFamily} ${ioc.type} ${ioc.source}`;
+      if (fuzzyMatch(haystack, query)) {
+        results.push({ id: `ioc-${ioc.id}`, kind: 'IOC', label: ioc.value, detail: `${ioc.threatFamily} · ${ioc.type}`, value: ioc.value });
+      }
+    });
+
+    return results.slice(0, 12);
+  };
+
+  const globalSearchResults = buildGlobalSearchResults(globalSearchValue);
+
+  const handleGlobalSearchSelect = (result: GlobalSearchResult) => {
+    const record = result.value;
+    switch (result.kind) {
+      case 'Event':
+        setSelectedIncidentId(record);
+        openEntityPivot('Event', record, result.label);
+        break;
+      case 'Incident':
+        setSelectedIncidentId(record);
+        openEntityPivot('Incident', record, result.label);
+        break;
+      case 'Case':
+        setSelectedCaseId(record);
+        openEntityPivot('Case', record, result.label);
+        break;
+      case 'Asset':
+        setSelectedAssetId(assets.find((asset) => asset.hostname === record)?.id ?? null);
+        openEntityPivot('Asset', record, result.label);
+        break;
+      case 'User':
+        setSelectedUserId(users.find((user) => user.name === record)?.id ?? null);
+        openEntityPivot('User', record, result.label);
+        break;
+      case 'IOC':
+        openEntityPivot('IOC', record, result.label);
+        break;
+      default:
+        break;
+    }
+
+    setGlobalSearchOpen(false);
+    setGlobalSearchValue('');
+    setSearchResultIndex(0);
+
+    if (record.trim()) {
+      setRecentSearches((current) => [record, ...current.filter((item) => item !== record)].slice(0, 8));
+    }
+  };
 
   const fetchHealth = async (token: string) => {
     try {
@@ -593,11 +1017,19 @@ function App() {
 
   const filterLogs = (items: LogEntry[]) => items.filter((log) => {
     const matchesSearch = !search || [log.source, log.eventType, log.message].some((value) =>
-      value.toLowerCase().includes(search.toLowerCase())
+      fuzzyMatch(value, search)
     );
 
-    const matchesSeverity = severityFilter === 'ALL' || log.severity === severityFilter;
-    return matchesSearch && matchesSeverity;
+    const matchesSeverity = appliedDashboardFilters.severity === 'ALL' || log.severity === appliedDashboardFilters.severity;
+    const matchesMitre = appliedDashboardFilters.mitre === 'All' || getMitreMapping(log.eventType).id === appliedDashboardFilters.mitre;
+    const matchesAsset = appliedDashboardFilters.asset === 'All' || [log.source, log.eventType, log.message].some((value) => fuzzyMatch(value, appliedDashboardFilters.asset));
+    const matchesIoc = appliedDashboardFilters.ioc === 'All' || [log.message].some((value) => fuzzyMatch(value, appliedDashboardFilters.ioc));
+    const matchesDateRange = (!appliedDashboardFilters.startDate || new Date(log.timestamp) >= new Date(appliedDashboardFilters.startDate)) && (!appliedDashboardFilters.endDate || new Date(log.timestamp) <= new Date(`${appliedDashboardFilters.endDate}T23:59:59.999Z`));
+
+    const matchesDepartment = appliedDashboardFilters.department === 'All' || [log.source, log.eventType, log.message].some((value) => fuzzyMatch(value, appliedDashboardFilters.department));
+    const matchesAnalyst = appliedDashboardFilters.analyst === 'All' || [log.source, log.eventType, log.message].some((value) => fuzzyMatch(value, appliedDashboardFilters.analyst));
+
+    return matchesSearch && matchesSeverity && matchesMitre && matchesAsset && matchesIoc && matchesDateRange && matchesDepartment && matchesAnalyst;
   });
 
   const fetchIncidentDetail = async (incidentId: string): Promise<IncidentDetail | null> => {
@@ -620,10 +1052,11 @@ function App() {
   const filteredLogs = filterLogs(logs);
   const filteredCriticalLogs = filterLogs([...incidentLogs, ...detectedIncidentLogs]);
 
-  const totalEvents = logs.length;
-  const criticalCount = logs.filter((log) => log.severity === 'CRITICAL').length;
-  const highCount = logs.filter((log) => log.severity === 'HIGH').length;
-  const todayCount = logs.filter((log) => {
+  const activeFilteredLogs = filterLogs(logs);
+  const totalEvents = activeFilteredLogs.length;
+  const criticalCount = activeFilteredLogs.filter((log) => log.severity === 'CRITICAL').length;
+  const highCount = activeFilteredLogs.filter((log) => log.severity === 'HIGH').length;
+  const todayCount = activeFilteredLogs.filter((log) => {
     const logDate = new Date(log.timestamp);
     const today = new Date();
     return logDate.toDateString() === today.toDateString();
@@ -730,6 +1163,20 @@ function App() {
 
     return () => source.close();
   }, [auth?.token]);
+
+  const recordAuditLog = (action: string, target: string, details: string, severity: AuditLogEntry['severity'] = 'Info', actor = auth?.user?.email ?? 'System') => {
+    const nextEntry: AuditLogEntry = {
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      actor,
+      action,
+      target,
+      details,
+      severity,
+      createdAt: new Date().toISOString()
+    };
+
+    setAuditLog((current) => [nextEntry, ...current].slice(0, 250));
+  };
 
   const addNotification = (kind: NotificationKind, title: string, message: string, relatedId?: string) => {
     const nextNotification: NotificationRecord = {
@@ -1567,6 +2014,8 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
     { label: 'Rules', icon: '◇' },
     { label: 'Threat Intel', icon: '✦' },
     { label: 'Reports', icon: '▥' },
+    { label: 'Settings', icon: '⚙' },
+    { label: 'Audit Log', icon: '🧾' },
     { label: 'Analyst', icon: '◌' }
   ].filter((item): item is { label: PageName; icon: string } => rolePageAccess[currentUserRole].includes(item.label as PageName));
 
@@ -2264,7 +2713,95 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
           rules={rules}
           ruleHitEvents={ruleHitEvents}
           analystName={auth.user.email}
+          branding={organizationBranding}
         />
+      );
+    }
+
+    if (activePage === 'Settings') {
+      return (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Enterprise Controls</div>
+              <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Organization Settings</h2>
+            </div>
+            <button type="button" onClick={() => { setOrganizationBranding(defaultBranding); setAppSettings(defaultAppSettings); recordAuditLog('Defaults restored', 'Settings', 'Enterprise settings were reset to the default baseline.', 'Warning'); }} style={{ border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.72)', color: '#e2e8f0', borderRadius: '10px', padding: '0.7rem 0.9rem', cursor: 'pointer', fontWeight: 700 }}>Reset Defaults</button>
+          </div>
+
+          <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1.25rem', display: 'grid', gap: '1.1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.9rem' }}>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Organization name<input value={organizationBranding.companyName} onChange={(event) => setOrganizationBranding((current) => ({ ...current, companyName: event.target.value, browserTitle: `${event.target.value} SOC Console` }))} style={fieldStyle} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Short code<input value={organizationBranding.shortName} onChange={(event) => setOrganizationBranding((current) => ({ ...current, shortName: event.target.value }))} style={fieldStyle} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Login tagline<input value={organizationBranding.loginTagline} onChange={(event) => setOrganizationBranding((current) => ({ ...current, loginTagline: event.target.value }))} style={fieldStyle} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Accent color<input type="color" value={organizationBranding.accentColor} onChange={(event) => setOrganizationBranding((current) => ({ ...current, accentColor: event.target.value, browserTitle: `${current.companyName} SOC Console` }))} style={{ ...fieldStyle, minHeight: '45px', padding: '0.2rem 0.4rem' }} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Secondary accent<input type="color" value={organizationBranding.accentSoft} onChange={(event) => setOrganizationBranding((current) => ({ ...current, accentSoft: event.target.value }))} style={{ ...fieldStyle, minHeight: '45px', padding: '0.2rem 0.4rem' }} /></label>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.9rem' }}>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', background: 'rgba(15, 23, 42, 0.64)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '12px', padding: '0.8rem 0.85rem' }}><span>Alert digest</span><input type="checkbox" checked={appSettings.alertDigest} onChange={(event) => setAppSettings((current) => ({ ...current, alertDigest: event.target.checked }))} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', background: 'rgba(15, 23, 42, 0.64)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '12px', padding: '0.8rem 0.85rem' }}><span>Auto save</span><input type="checkbox" checked={appSettings.autoSave} onChange={(event) => setAppSettings((current) => ({ ...current, autoSave: event.target.checked }))} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', background: 'rgba(15, 23, 42, 0.64)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '12px', padding: '0.8rem 0.85rem' }}><span>Require approval</span><input type="checkbox" checked={appSettings.requireApproval} onChange={(event) => setAppSettings((current) => ({ ...current, requireApproval: event.target.checked }))} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Default report range<select value={appSettings.defaultReportRange} onChange={(event) => setAppSettings((current) => ({ ...current, defaultReportRange: event.target.value as AppSettings['defaultReportRange'] }))} style={fieldStyle}><option value="today">Today</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Session timeout (minutes)<input type="number" min={15} max={180} value={appSettings.sessionTimeoutMinutes} onChange={(event) => setAppSettings((current) => ({ ...current, sessionTimeoutMinutes: Number(event.target.value) || 60 }))} style={fieldStyle} /></label>
+              <label style={{ color: '#cbd5e1', fontSize: '0.78rem', display: 'grid', gap: '0.4rem' }}>Risk threshold<input type="number" min={10} max={100} value={appSettings.riskThreshold} onChange={(event) => setAppSettings((current) => ({ ...current, riskThreshold: Number(event.target.value) || 80 }))} style={fieldStyle} /></label>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => recordAuditLog('Settings updated', organizationBranding.companyName, 'Enterprise policy preferences and branding were updated in the SOC console.', 'Info')} style={{ border: '1px solid rgba(96, 165, 250, 0.55)', borderRadius: '10px', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', color: '#eff6ff', padding: '0.7rem 1rem', cursor: 'pointer', fontWeight: 700 }}>Apply changes</button>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    if (activePage === 'Audit Log') {
+      return (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Governance</div>
+              <h2 style={{ margin: '0.25rem 0 0', fontSize: '1.5rem' }}>Audit Log</h2>
+            </div>
+            <button type="button" onClick={() => {
+              const payload = JSON.stringify(auditLog, null, 2);
+              const blob = new Blob([payload], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = 'sentinel-audit-log.json';
+              link.click();
+              URL.revokeObjectURL(url);
+              recordAuditLog('Audit export', 'Audit Log', 'Audit trail exported for compliance review.', 'Info');
+            }} style={{ border: '1px solid rgba(96, 165, 250, 0.55)', borderRadius: '10px', background: 'linear-gradient(135deg, #2563eb, #0ea5e9)', color: '#eff6ff', padding: '0.7rem 1rem', cursor: 'pointer', fontWeight: 700 }}>Export JSON</button>
+          </div>
+
+          <div style={{ background: 'rgba(15, 23, 42, 0.38)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '0.25rem', overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', minWidth: '760px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: '#93c5fd', textAlign: 'left', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                    {['Time', 'Actor', 'Action', 'Target', 'Severity', 'Details'].map((header) => (
+                      <th key={header} style={{ padding: '0.9rem 0.75rem', borderBottom: '1px solid rgba(148, 163, 184, 0.16)' }}>{header}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLog.map((entry) => (
+                    <tr key={entry.id} style={{ borderBottom: '1px solid rgba(148, 163, 184, 0.1)' }}>
+                      <td style={{ padding: '0.8rem 0.75rem', color: '#cbd5e1', whiteSpace: 'nowrap' }}>{new Date(entry.createdAt).toLocaleString()}</td>
+                      <td style={{ padding: '0.8rem 0.75rem', color: '#f8fafc', fontWeight: 700 }}>{entry.actor}</td>
+                      <td style={{ padding: '0.8rem 0.75rem', color: '#dbeafe' }}>{entry.action}</td>
+                      <td style={{ padding: '0.8rem 0.75rem', color: '#cbd5e1' }}>{entry.target}</td>
+                      <td style={{ padding: '0.8rem 0.75rem' }}><span style={{ display: 'inline-flex', borderRadius: '999px', padding: '0.2rem 0.5rem', fontSize: '0.66rem', fontWeight: 700, background: entry.severity === 'Critical' ? 'rgba(239,68,68,0.14)' : entry.severity === 'Warning' ? 'rgba(251,191,36,0.14)' : 'rgba(59,130,246,0.14)', color: entry.severity === 'Critical' ? '#fca5a5' : entry.severity === 'Warning' ? '#fbbf24' : '#bfdbfe' }}>{entry.severity}</span></td>
+                      <td style={{ padding: '0.8rem 0.75rem', color: '#cbd5e1', lineHeight: 1.5 }}>{entry.details}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
       );
     }
 
@@ -2360,6 +2897,95 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+        <div style={{ background: 'rgba(15, 23, 42, 0.36)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', padding: '1rem', marginBottom: '0.3rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: '#93c5fd', fontSize: '0.72rem', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.35rem' }}>Advanced Investigation</div>
+              <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Threat Filters</h2>
+            </div>
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" onClick={() => setSaveViewModalOpen(true)} style={{ border: '1px solid rgba(96, 165, 250, 0.35)', background: 'rgba(59, 130, 246, 0.12)', color: '#dbeafe', borderRadius: '10px', padding: '0.55rem 0.8rem', cursor: 'pointer', fontWeight: 700 }}>Save view</button>
+              <button type="button" onClick={applyDashboardFilters} style={{ border: '1px solid rgba(34, 197, 94, 0.35)', background: 'rgba(34, 197, 94, 0.12)', color: '#d1fae5', borderRadius: '10px', padding: '0.55rem 0.8rem', cursor: 'pointer', fontWeight: 700 }}>Apply</button>
+              <button type="button" onClick={clearDashboardFilters} style={{ border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', borderRadius: '10px', padding: '0.55rem 0.8rem', cursor: 'pointer', fontWeight: 700 }}>Clear</button>
+              <button type="button" onClick={() => setAdvancedInvestigationCollapsed((value) => !value)} style={{ border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.72)', color: '#e2e8f0', borderRadius: '10px', padding: '0.55rem 0.75rem', cursor: 'pointer', fontWeight: 700 }}>{advancedInvestigationCollapsed ? 'Show filters' : 'Hide filters'}</button>
+            </div>
+          </div>
+
+          {!advancedInvestigationCollapsed && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginTop: '0.9rem' }}>
+                <select value={draftDashboardFilters.severity} onChange={(event) => updateDashboardFilter('severity', event.target.value as SeverityFilter)} style={{ ...fieldStyle, minWidth: 0 }}>
+                  <option value="ALL">All severities</option>
+                  {severityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+                <select value={draftDashboardFilters.mitre} onChange={(event) => updateDashboardFilter('mitre', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }}>
+                  <option value="All">All MITRE</option>
+                  {[...new Set(logs.map((log) => getMitreMapping(log.eventType).id))].map((id) => <option key={id} value={id}>{id}</option>)}
+                </select>
+                <select value={draftDashboardFilters.department} onChange={(event) => updateDashboardFilter('department', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }}>
+                  <option value="All">All departments</option>
+                  {[...new Set([...assets.map((asset) => asset.department), ...users.map((user) => user.department)])].map((department) => <option key={department} value={department}>{department}</option>)}
+                </select>
+                <select value={draftDashboardFilters.analyst} onChange={(event) => updateDashboardFilter('analyst', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }}>
+                  <option value="All">All analysts</option>
+                  {demoAnalysts.map((analyst) => <option key={analyst} value={analyst}>{analyst}</option>)}
+                </select>
+                <select value={draftDashboardFilters.asset} onChange={(event) => updateDashboardFilter('asset', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }}>
+                  <option value="All">All assets</option>
+                  {assets.map((asset) => <option key={asset.id} value={asset.hostname}>{asset.hostname}</option>)}
+                </select>
+                <input type="date" value={draftDashboardFilters.startDate} onChange={(event) => updateDashboardFilter('startDate', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }} />
+                <input type="date" value={draftDashboardFilters.endDate} onChange={(event) => updateDashboardFilter('endDate', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }} />
+                <select value={draftDashboardFilters.ioc} onChange={(event) => updateDashboardFilter('ioc', event.target.value)} style={{ ...fieldStyle, minWidth: 0 }}>
+                  <option value="All">All IOCs</option>
+                  {iocs.map((ioc) => <option key={ioc.id} value={ioc.value}>{ioc.value}</option>)}
+                </select>
+              </div>
+
+              <div style={{ marginTop: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <div style={{ color: '#cbd5e1', fontSize: '0.75rem' }}>{activeFilterCount} active filter{activeFilterCount === 1 ? '' : 's'}</div>
+                {dashboardFilterChips.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
+                    {dashboardFilterChips.map((chip) => (
+                      <span key={chip.key} style={{ display: 'inline-flex', alignItems: 'center', borderRadius: '999px', background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(96,165,250,0.35)', color: '#dbeafe', padding: '0.35rem 0.6rem', fontSize: '0.7rem' }}>{chip.label}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {savedViews.length > 0 && (
+                <div style={{ marginTop: '0.85rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                  {savedViews.map((savedView) => (
+                    <div key={savedView.id} style={{ position: 'relative' }}>
+                      <button type="button" onClick={() => applySavedView(savedView)} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', background: savedView.isDefault ? 'rgba(59,130,246,0.12)' : 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', borderRadius: '999px', padding: '0.45rem 0.7rem', cursor: 'pointer' }}>{savedView.name}</button>
+                      <button type="button" onClick={() => setViewMenuOpenId((current) => current === savedView.id ? null : savedView.id)} style={{ marginLeft: '0.3rem', border: '1px solid rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.7)', color: '#cbd5e1', borderRadius: '999px', width: '24px', height: '24px', cursor: 'pointer' }}>⋯</button>
+                      {viewMenuOpenId === savedView.id && (
+                        <div style={{ position: 'absolute', top: 'calc(100% + 8px)', left: 0, minWidth: '180px', background: 'rgba(15, 23, 42, 0.96)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '10px', padding: '0.5rem', zIndex: 20, display: 'grid', gap: '0.35rem' }}>
+                          <button type="button" onClick={() => duplicateSavedView(savedView.id)} style={{ textAlign: 'left', border: 'none', background: 'transparent', color: '#e2e8f0', cursor: 'pointer', padding: '0.35rem 0.4rem' }}>Duplicate</button>
+                          {!savedView.isDefault && (
+                            <button type="button" onClick={() => setDefaultSavedView(savedView.id)} style={{ textAlign: 'left', border: 'none', background: 'transparent', color: '#e2e8f0', cursor: 'pointer', padding: '0.35rem 0.4rem' }}>Set default</button>
+                          )}
+                          {!savedView.isDefault && (
+                            <button type="button" onClick={() => deleteSavedView(savedView.id)} style={{ textAlign: 'left', border: 'none', background: 'transparent', color: '#fca5a5', cursor: 'pointer', padding: '0.35rem 0.4rem' }}>Delete</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {saveViewModalOpen && (
+                <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input value={viewNameDraft} onChange={(event) => setViewNameDraft(event.target.value)} placeholder="View name" style={{ minWidth: '180px', padding: '0.6rem 0.75rem', borderRadius: '10px', border: '1px solid rgba(148, 163, 184, 0.2)', background: '#0f172a', color: '#e2e8f0' }} />
+                  <button type="button" onClick={saveCurrentView} style={{ border: '1px solid rgba(96, 165, 250, 0.35)', background: 'rgba(59, 130, 246, 0.12)', color: '#dbeafe', borderRadius: '10px', padding: '0.55rem 0.8rem', cursor: 'pointer', fontWeight: 700 }}>Save</button>
+                  <button type="button" onClick={() => setSaveViewModalOpen(false)} style={{ border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.7)', color: '#e2e8f0', borderRadius: '10px', padding: '0.55rem 0.8rem', cursor: 'pointer' }}>Cancel</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
           <KPIGrid
             totalEvents={totalEvents}
@@ -3034,6 +3660,11 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => setGlobalSearchOpen(true)} style={{ border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.72)', color: '#dbeafe', borderRadius: '12px', padding: '0.6rem 0.8rem', cursor: 'pointer', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span>⌕</span>
+                  <span>Search</span>
+                  <span style={{ fontSize: '0.68rem', opacity: 0.75 }}>Ctrl+K</span>
+                </button>
                 <div style={{ position: 'relative' }}>
                   <button type="button" onClick={() => setNotificationsOpen((value) => !value)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '42px', height: '42px', borderRadius: '12px', border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.72)', color: '#e2e8f0', cursor: 'pointer', position: 'relative' }}>
                     <span style={{ fontSize: '1.1rem' }}>🔔</span>
@@ -3129,6 +3760,124 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
 
           {renderPageContent()}
         </main>
+
+        {globalSearchOpen && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(2, 8, 23, 0.76)', display: 'grid', placeItems: 'center', zIndex: 100 }} onClick={() => setGlobalSearchOpen(false)}>
+            <div onClick={(event) => event.stopPropagation()} style={{ width: 'min(760px, calc(100vw - 2rem))', background: 'rgba(15, 23, 42, 0.94)', border: '1px solid rgba(148, 163, 184, 0.22)', borderRadius: '20px', boxShadow: '0 28px 60px rgba(2, 6, 23, 0.55)', overflow: 'hidden' }}>
+              <div style={{ padding: '1rem 1rem 0.8rem', borderBottom: '1px solid rgba(148, 163, 184, 0.12)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', border: '1px solid rgba(148, 163, 184, 0.16)', background: 'rgba(2, 6, 23, 0.78)', borderRadius: '12px', padding: '0.7rem 0.9rem' }}>
+                  <span style={{ color: '#93c5fd', fontSize: '1.2rem' }}>⌕</span>
+                  <input id="global-search-input" value={globalSearchValue} onChange={(event) => { setGlobalSearchValue(event.target.value); setSearchResultIndex(0); }} onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      setSearchResultIndex((current) => (current + 1) % Math.max(globalSearchResults.length, 1));
+                    }
+                    if (event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      setSearchResultIndex((current) => (current - 1 + Math.max(globalSearchResults.length, 1)) % Math.max(globalSearchResults.length, 1));
+                    }
+                    if (event.key === 'Enter' && globalSearchResults[searchResultIndex]) {
+                      event.preventDefault();
+                      handleGlobalSearchSelect(globalSearchResults[searchResultIndex]);
+                    }
+                  }} placeholder="Search events, incidents, cases, assets, users, or IOCs" style={{ flex: 1, background: 'transparent', border: 'none', color: '#e2e8f0', outline: 'none', fontSize: '1rem' }} />
+                  <span style={{ color: '#94a3b8', fontSize: '0.7rem', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '8px', padding: '0.25rem 0.45rem' }}>Esc</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: '0.7rem', padding: '0.9rem 1rem 1rem', maxHeight: '420px', overflowY: 'auto' }}>
+                {recentSearches.length > 0 && !globalSearchValue && (
+                  <div>
+                    <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Recent</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
+                      {recentSearches.map((query) => (
+                        <button key={query} type="button" onClick={() => { setGlobalSearchValue(query); setSearchResultIndex(0); }} style={{ border: '1px solid rgba(148, 163, 184, 0.16)', background: 'rgba(15, 23, 42, 0.72)', color: '#e2e8f0', padding: '0.45rem 0.7rem', borderRadius: '999px', cursor: 'pointer' }}>{query}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {globalSearchResults.length === 0 ? (
+                  <div style={{ color: '#cbd5e1', padding: '0.7rem 0.3rem' }}>No matches found. Try a host, username, IP, event, or IOC value.</div>
+                ) : (
+                  globalSearchResults.map((result, index) => (
+                    <button key={result.id} type="button" onClick={() => handleGlobalSearchSelect(result)} style={{ textAlign: 'left', width: '100%', border: index === searchResultIndex ? '1px solid rgba(96, 165, 250, 0.5)' : '1px solid rgba(148, 163, 184, 0.14)', background: index === searchResultIndex ? 'rgba(59, 130, 246, 0.12)' : 'rgba(15, 23, 42, 0.62)', color: '#e2e8f0', borderRadius: '12px', padding: '0.8rem 0.85rem', cursor: 'pointer' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.7rem' }}>
+                        <span style={{ fontSize: '0.7rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#93c5fd' }}>{result.kind}</span>
+                        <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{result.value}</span>
+                      </div>
+                      <div style={{ marginTop: '0.4rem', fontWeight: 700 }}>{result.label}</div>
+                      <div style={{ marginTop: '0.2rem', color: '#cbd5e1', fontSize: '0.76rem' }}>{result.detail}</div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {entityPivot && (
+          <aside style={{ position: 'fixed', top: '1rem', right: '1rem', width: 'min(420px, calc(100vw - 2rem))', height: 'calc(100vh - 2rem)', background: 'rgba(15, 23, 42, 0.94)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '18px', boxShadow: '0 28px 60px rgba(2, 6, 23, 0.5)', zIndex: 90, padding: '1rem', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div>
+                <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{entityPivot.kind}</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '0.25rem' }}>{entityPivot.label}</div>
+              </div>
+              <button type="button" onClick={() => setEntityPivot(null)} style={{ border: '1px solid rgba(148, 163, 184, 0.2)', background: 'rgba(15, 23, 42, 0.8)', color: '#e2e8f0', borderRadius: '10px', width: '32px', height: '32px', cursor: 'pointer' }}>×</button>
+            </div>
+
+            <div style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.18)', borderRadius: '12px', padding: '0.8rem', marginBottom: '0.9rem' }}>
+              <div style={{ color: '#cbd5e1', fontSize: '0.72rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Entity</div>
+              <div style={{ color: '#f8fafc', fontWeight: 700, wordBreak: 'break-word' }}>{entityPivot.value}</div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              <section>
+                <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Related events</div>
+                {filterLogs(logs).filter((log) => {
+                  const haystack = `${log.source} ${log.eventType} ${log.message}`.toLowerCase();
+                  return haystack.includes(entityPivot.value.toLowerCase()) || entityPivot.value.toLowerCase().includes(log.source.toLowerCase()) || entityPivot.value.toLowerCase().includes(log.eventType.toLowerCase());
+                }).slice(0, 5).map((log) => (
+                  <div key={log.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '10px', padding: '0.6rem 0.7rem', marginBottom: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.4rem' }}>
+                      <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{log.eventType}</span>
+                      <span style={{ color: '#94a3b8', fontSize: '0.7rem' }}>{log.severity}</span>
+                    </div>
+                    <div style={{ color: '#cbd5e1', fontSize: '0.72rem', marginTop: '0.25rem' }}>{new Date(log.timestamp).toLocaleString()}</div>
+                  </div>
+                )) || <div style={{ color: '#cbd5e1' }}>No related events.</div>}
+              </section>
+
+              <section>
+                <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Incidents</div>
+                {(detectedIncidents.filter((incident) => {
+                  const haystack = `${incident.log.source} ${incident.log.eventType} ${incident.log.message} ${incident.ruleName ?? ''} ${incident.mitreTechnique ?? ''}`.toLowerCase();
+                  return haystack.includes(entityPivot.value.toLowerCase());
+                }).slice(0, 4).map((incident) => (
+                  <div key={incident.log.id} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '10px', padding: '0.6rem 0.7rem', marginBottom: '0.5rem' }}>
+                    <div style={{ color: '#e2e8f0', fontWeight: 700 }}>{incident.log.eventType}</div>
+                    <div style={{ color: '#cbd5e1', fontSize: '0.72rem', marginTop: '0.2rem' }}>{incident.ruleName ?? 'IOC detection'}</div>
+                  </div>
+                )) || <div style={{ color: '#cbd5e1' }}>No incident matches.</div>)}
+              </section>
+
+              <section>
+                <div style={{ color: '#93c5fd', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Assets / Users / IOC</div>
+                <div style={{ display: 'grid', gap: '0.5rem' }}>
+                  {assets.filter((asset) => [asset.hostname, asset.ip, asset.owner].some((value) => fuzzyMatch(value, entityPivot.value))).slice(0, 3).map((asset) => (
+                    <button key={asset.id} type="button" onClick={() => openEntityPivot('Asset', asset.hostname, asset.hostname)} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '10px', padding: '0.6rem 0.7rem', color: '#e2e8f0', textAlign: 'left', cursor: 'pointer' }}>{asset.hostname} · {asset.ip}</button>
+                  ))}
+                  {users.filter((user) => [user.name, user.email, ...user.devices].some((value) => fuzzyMatch(value, entityPivot.value))).slice(0, 3).map((user) => (
+                    <button key={user.id} type="button" onClick={() => openEntityPivot('User', user.name, user.name)} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '10px', padding: '0.6rem 0.7rem', color: '#e2e8f0', textAlign: 'left', cursor: 'pointer' }}>{user.name} · {user.department}</button>
+                  ))}
+                  {iocs.filter((ioc) => fuzzyMatch(ioc.value, entityPivot.value) || fuzzyMatch(ioc.threatFamily, entityPivot.value)).slice(0, 3).map((ioc) => (
+                    <button key={ioc.id} type="button" onClick={() => openEntityPivot('IOC', ioc.value, ioc.value)} style={{ background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(148, 163, 184, 0.12)', borderRadius: '10px', padding: '0.6rem 0.7rem', color: '#e2e8f0', textAlign: 'left', cursor: 'pointer' }}>{ioc.value} · {ioc.threatFamily}</button>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </aside>
+        )}
 
         {toastNotifications.length > 0 && (
           <div style={{ position: 'fixed', right: '1.25rem', bottom: '1.25rem', display: 'grid', gap: '0.7rem', zIndex: 80 }}>

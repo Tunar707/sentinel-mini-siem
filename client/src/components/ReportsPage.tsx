@@ -19,6 +19,15 @@ type RuleHitEvent = {
   timestamp: string;
 };
 
+type BrandingConfig = {
+  companyName: string;
+  shortName: string;
+  accentColor: string;
+  accentSoft: string;
+  browserTitle: string;
+  loginTagline: string;
+};
+
 type ReportsPageProps = {
   logs: LogEntry[];
   incidents: ReportIncident[];
@@ -26,6 +35,7 @@ type ReportsPageProps = {
   rules: DetectionRule[];
   ruleHitEvents: RuleHitEvent[];
   analystName: string;
+  branding: BrandingConfig;
 };
 
 type ReportRange = 'today' | '7d' | '30d' | 'custom';
@@ -43,7 +53,7 @@ const chartColors = ['#38bdf8', '#818cf8', '#f59e0b', '#fb7185', '#4ade80'];
 
 const toDateInput = (date: Date) => date.toISOString().slice(0, 10);
 
-function ReportsPage({ logs, incidents, cases, rules, ruleHitEvents, analystName }: ReportsPageProps) {
+function ReportsPage({ logs, incidents, cases, rules, ruleHitEvents, analystName, branding }: ReportsPageProps) {
   const [range, setRange] = useState<ReportRange>('7d');
   const [customStart, setCustomStart] = useState(() => toDateInput(new Date(Date.now() - 6 * 24 * 60 * 60 * 1000)));
   const [customEnd, setCustomEnd] = useState(() => toDateInput(new Date()));
