@@ -2917,12 +2917,13 @@ if (portalMode === 'employee' || currentUserRole === 'employee') {
 
   return (
     <div style={{
+      width: '100vw',
       minHeight: '100vh',
       background: 'linear-gradient(135deg, #0f172a 0%, #0b1f3a 30%, #123a72 100%)',
       color: '#e2e8f0',
       fontFamily: 'Inter, system-ui, sans-serif'
     }}>
-      <div style={{ display: 'flex', minHeight: '100vh', padding: '1.25rem' }}>
+      <div style={{ display: 'flex', minHeight: '100vh', width: '100%', padding: 0 }}>
         <aside style={{
           width: sidebarCollapsed ? '88px' : '248px',
           transition: 'width 0.2s ease',
